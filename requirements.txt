@@ -20,4 +20,4 @@ bbknn>=1.6
 scrublet>=0.2.4
 
 # (Advanced) FASTQ → counts
-kb-python>=0.27
+#kb-python>=0.27

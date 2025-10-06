@@ -1,0 +1,23 @@
+streamlit>=1.38
+scanpy>=1.10
+anndata>=0.10
+pandas>=2.2
+numpy>=1.26
+matplotlib>=3.9
+plotly>=5.24
+scikit-learn>=1.5
+# Cell type annotation
+celltypist>=1.5
+
+# RNA velocity
+scvelo>=0.3.2
+
+# Integration / batch correction
+harmonypy>=0.0.9
+bbknn>=1.6
+
+# Doublet detection
+scrublet>=0.2.4
+
+# (Advanced) FASTQ → counts
+kb-python>=0.27

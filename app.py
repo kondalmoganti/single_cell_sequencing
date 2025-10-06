@@ -47,6 +47,46 @@ st.set_page_config(page_title="scRNA-seq Streamlit MVP", layout="wide")
 # ---------------------------
 # Utilities
 # ---------------------------
+# Demo cap settings live in session_state so we can apply right after any load
+if "demo_cap_enabled" not in st.session_state:
+    st.session_state.demo_cap_enabled = True
+if "demo_cap_n" not in st.session_state:
+    st.session_state.demo_cap_n = 5000
+if "demo_cap_seed" not in st.session_state:
+    st.session_state.demo_cap_seed = 0
+
+@st.cache_data(show_spinner=False)
+def _cache_bytes(b: bytes):
+    """Cache raw bytes and return as-is (helps when reusing uploads)."""
+    return b
+
+@st.cache_data(show_spinner=False)
+def read_h5ad_from_bytes(raw: bytes):
+    import anndata as ad
+    with tempfile.NamedTemporaryFile(suffix=".h5ad", delete=False) as tmp:
+        tmp.write(raw)
+        tmp.flush()
+        adata = ad.read_h5ad(tmp.name)
+    return adata
+
+
+def _apply_demo_cap(adata, cap: int = 5000, seed: int = 0):
+    """Downsample cells to `cap` if enabled and adata.n_obs > cap.
+    Returns (adata2, applied_bool).
+    """
+    if not st.session_state.get("demo_cap_enabled", True):
+        return adata, False
+    if adata.n_obs <= int(cap):
+        return adata, False
+    rs = np.random.RandomState(int(seed))
+    idx = rs.choice(adata.n_obs, int(cap), replace=False)
+    adata2 = adata[idx, :].copy()
+    adata2.uns["_demo_cap"] = {
+        "cap": int(cap),
+        "seed": int(seed),
+        "from_n_obs": int(adata.n_obs),
+    }
+    return adata2, True
 @st.cache_data(show_spinner=False)
 def _cache_bytes(b: bytes):
     """Cache raw bytes and return as-is (helps when reusing uploads)."""
@@ -138,6 +178,11 @@ def _rank_genes_df(adata, groupby="leiden"):
 # Sidebar: Data Ingest
 # ---------------------------
 st.sidebar.title("Pipeline")
+# Demo limits (affects any newly loaded data)
+st.sidebar.markdown("### Demo limits")
+st.session_state.demo_cap_enabled = st.sidebar.checkbox("Enable demo cell cap", value=st.session_state.demo_cap_enabled)
+st.session_state.demo_cap_n = int(st.sidebar.number_input("Max cells (cap)", min_value=500, max_value=50000, value=st.session_state.demo_cap_n, step=500))
+st.session_state.demo_cap_seed = int(st.sidebar.number_input("Random seed", min_value=0, max_value=999999, value=st.session_state.demo_cap_seed, step=1))
 step = st.sidebar.radio(
     "Choose step",
     [
@@ -174,6 +219,11 @@ if step == "Load Data":
                 adata = read_h5ad_from_bytes(raw)
             st.session_state.adata = adata
             st.success(f"Loaded AnnData with {adata.n_obs} cells × {adata.n_vars} genes.")
+            # Apply demo cap immediately after load
+            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            st.session_state.adata = adata
+            if applied:
+                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
 
     with tabs[1]:
         mtx_archive = st.file_uploader("Upload 10x matrix archive (.zip or .tar.gz)", type=["zip", "gz", "tar", "tgz"])  
@@ -184,6 +234,11 @@ if step == "Load Data":
                 adata = read_10x_mtx(raw, inner_dir_hint=hint or None)
             st.session_state.adata = adata
             st.success(f"Loaded matrix with {adata.n_obs} cells × {adata.n_vars} genes.")
+            # Apply demo cap immediately after load
+            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            st.session_state.adata = adata
+            if applied:
+                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
 
     with tabs[2]:
         h5_file = st.file_uploader("Upload 10x HDF5 (.h5)", type=["h5"])  
@@ -193,6 +248,11 @@ if step == "Load Data":
                 adata = read_10x_h5(raw)
             st.session_state.adata = adata
             st.success(f"Loaded matrix with {adata.n_obs} cells × {adata.n_vars} genes.")
+            # Apply demo cap immediately after load
+            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            st.session_state.adata = adata
+            if applied:
+                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
 
     with tabs[3]:
         st.warning("Advanced: requires kb-python or STARsolo pre-installed on the host. This may be slow/expensive.")
@@ -240,6 +300,11 @@ if step == "Load Data":
                     adata = sc.read_10x_mtx(mtx_dir, var_names='gene_symbols', cache=False)
                     st.session_state.adata = adata
                     st.success(f"Loaded counts with {adata.n_obs} cells × {adata.n_vars} genes.")
+                    # Apply demo cap immediately after load
+                    adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+                    st.session_state.adata = adata
+                    if applied:
+                        st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
                 except Exception as e:
                     st.error(f"FASTQ → counts failed: {e}")
 
@@ -256,13 +321,30 @@ if step == "QC & Filtering":
     adata = st.session_state.adata.copy()
 
     st.subheader("Quality Control")
-    gene_prefix = st.text_input("Mitochondrial gene prefix (common: 'MT-')", value="MT-")
+    gene_prefix = st.text_input("Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')", value="MT-")
+
+    # Determine mt genes BEFORE calling calculate_qc_metrics to avoid KeyError
+    # Try var_names, or if available, a gene symbol column
+    var_symbols = None
+    for cand in ["gene_symbols", "gene_symbol", "features", "name", "symbol"]:
+        if cand in adata.var.columns:
+            var_symbols = adata.var[cand].astype(str)
+            break
+    if var_symbols is None:
+        var_symbols = adata.var_names.astype(str)
+
+    # Case-insensitive prefix match
+    mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
+    adata.var["mt"] = mt_genes_mask.values
+
     if st.button("Compute QC metrics"):
-        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
-    # Add mt fraction if missing
-    mt_genes = adata.var_names.str.startswith(gene_prefix)
-    adata.var["mt"] = mt_genes
-    sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+        try:
+            sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+            st.success("QC metrics computed.")
+        except KeyError:
+            st.error("Could not compute QC metrics: 'mt' column missing in adata.var. Please check mitochondrial prefix.")
+        except Exception as e:
+            st.error(f"QC failed: {e}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -274,18 +356,29 @@ if step == "QC & Filtering":
 
     if st.button("Filter cells/genes"):
         before = (adata.n_obs, adata.n_vars)
+        # Ensure QC metrics are present; compute if missing
+        if "n_genes_by_counts" not in adata.obs or "pct_counts_mt" not in adata.obs:
+            try:
+                sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+            except Exception as e:
+                st.error(f"QC metrics missing and failed to compute: {e}")
+                st.stop()
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
+        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
 
-    st.write("Top cells:")
-    st.dataframe(adata.obs[["n_genes_by_counts", "total_counts", "pct_counts_mt"]].head(), use_container_width=True)
+    # Show a small QC preview if available
+    cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
+    if cols_to_show:
+        st.write("Top cells:")
+        st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
 
 # ---------------------------
+
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":

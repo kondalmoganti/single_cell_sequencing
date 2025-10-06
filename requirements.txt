@@ -7,3 +7,5 @@ matplotlib>=3.8
 plotly>=5.24
 scikit-learn>=1.5
 numba>=0.59
+python-igraph>=0.11
+leidenalg>=0.10

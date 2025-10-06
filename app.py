@@ -321,10 +321,12 @@ if step == "QC & Filtering":
     adata = st.session_state.adata.copy()
 
     st.subheader("Quality Control")
-    gene_prefix = st.text_input("Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')", value="MT-")
+    gene_prefix = st.text_input(
+        "Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')",
+        value="MT-",
+    )
 
-    # Determine mt genes BEFORE calling calculate_qc_metrics to avoid KeyError
-    # Try var_names, or if available, a gene symbol column
+    # Determine mitochondrial genes before QC metric calculation
     var_symbols = None
     for cand in ["gene_symbols", "gene_symbol", "features", "name", "symbol"]:
         if cand in adata.var.columns:
@@ -335,18 +337,22 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    # Robust assignment whether mask is Series or ndarray
-adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
+    # Compute QC metrics
     if st.button("Compute QC metrics"):
         try:
             sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             st.success("QC metrics computed.")
         except KeyError:
-            st.error("Could not compute QC metrics: 'mt' column missing in adata.var. Please check mitochondrial prefix.")
+            st.error(
+                "Could not compute QC metrics: 'mt' column missing in adata.var. "
+                "Please check mitochondrial prefix."
+            )
         except Exception as e:
             st.error(f"QC failed: {e}")
 
+    # Filtering parameters
     c1, c2, c3 = st.columns(3)
     with c1:
         n_genes_min = st.number_input("Min genes per cell", value=200, step=50)
@@ -355,31 +361,41 @@ adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
     with c3:
         mt_max = st.slider("Max mito %", min_value=0, max_value=100, value=20)
 
+    # Apply filtering
     if st.button("Filter cells/genes"):
         before = (adata.n_obs, adata.n_vars)
-        # Ensure QC metrics are present; compute if missing
+        # Ensure QC metrics exist
         if "n_genes_by_counts" not in adata.obs or "pct_counts_mt" not in adata.obs:
             try:
                 sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
+
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
+        if "pct_counts_mt" in adata.obs:
+            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
+
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
 
-    # Show a small QC preview if available
-    cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
+    # Display QC summary
+    cols_to_show = [
+        c
+        for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"]
+        if c in adata.obs.columns
+    ]
     if cols_to_show:
         st.write("Top cells:")
-        st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
+        st.dataframe(
+            adata.obs[cols_to_show].head(),
+            use_container_width=True,
+        )
 
 # ---------------------------
-
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":
@@ -389,18 +405,19 @@ if step == "Normalize & HVGs":
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
-    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (optional)"])
+    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (placeholder)"])
     if method.startswith("pp.normalize_total"):
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
-            sc.pp.normalize_total(adata, target_sum=target_sum)
+            sc.pp.normalize_total(adata, target_sum=float(target_sum))
             sc.pp.log1p(adata)
             st.success("Normalized and log1p-transformed.")
     else:
-        st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
+        st.info("SCTransform is not bundled. Consider scvi-tools or R interop if needed.")
 
     st.subheader("Highly Variable Genes")
-    # Use safer default flavor for Streamlit Cloud to avoid numba ImportError on Python 3.13
+
+    # Safer defaults for Streamlit Cloud (avoid numba dependency on 3.13)
     flavor_choice = st.selectbox(
         "HVG flavor",
         ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
@@ -411,16 +428,21 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
+
     n_top = st.number_input("n_top_genes", value=2000, step=500)
+
     if st.button("Find HVGs"):
         try:
             sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
         except ImportError as e:
-            st.warning(f"{e}
-Falling back to flavor='seurat' (no numba needed).")
+            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
         except Exception as e:
             st.error(f"HVG computation failed: {e}")
 

@@ -335,7 +335,8 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    adata.var["mt"] = mt_genes_mask.values
+    # Robust assignment whether mask is Series or ndarray
+adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
     if st.button("Compute QC metrics"):
         try:

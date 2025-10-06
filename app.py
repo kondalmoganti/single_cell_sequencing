@@ -335,7 +335,8 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    # Robust assignment whether mask is Series or ndarray
+adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
     if st.button("Compute QC metrics"):
         try:
@@ -363,22 +364,13 @@ if step == "QC & Filtering":
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
-
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        if "pct_counts_mt" in adata.obs:
-            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
+        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
-
-    # Show a small QC preview if available
-    cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
-    if cols_to_show:
-        st.write("Top cells:")
-        st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
-
 
     # Show a small QC preview if available
     cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
@@ -408,11 +400,29 @@ if step == "Normalize & HVGs":
         st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
 
     st.subheader("Highly Variable Genes")
-    flavor = st.selectbox("flavor", ["seurat_v3", "cell_ranger", "seurat"])
+    # Use safer default flavor for Streamlit Cloud to avoid numba ImportError on Python 3.13
+    flavor_choice = st.selectbox(
+        "HVG flavor",
+        ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
+    )
+    flavor_map = {
+        "cell_ranger": "cell_ranger",
+        "seurat": "seurat",
+        "seurat_v3 (needs numba)": "seurat_v3",
+    }
+    flavor = flavor_map[flavor_choice]
     n_top = st.number_input("n_top_genes", value=2000, step=500)
     if st.button("Find HVGs"):
-        sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-        st.write(adata.var["highly_variable"].value_counts())
+        try:
+            sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+        except ImportError as e:
+            st.warning(f"{e}
+Falling back to flavor='seurat' (no numba needed).")
+            sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+        except Exception as e:
+            st.error(f"HVG computation failed: {e}")
 
     if st.button("Save and continue"):
         st.session_state.adata = adata

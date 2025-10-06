@@ -335,8 +335,7 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    # Robust assignment whether mask is Series or ndarray
-adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
     if st.button("Compute QC metrics"):
         try:
@@ -364,13 +363,22 @@ adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
+
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
+        if "pct_counts_mt" in adata.obs:
+            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
+
+    # Show a small QC preview if available
+    cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
+    if cols_to_show:
+        st.write("Top cells:")
+        st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
+
 
     # Show a small QC preview if available
     cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]

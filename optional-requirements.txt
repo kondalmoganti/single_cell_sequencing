@@ -1,0 +1,6 @@
+celltypist>=1.5
+scvelo>=0.3.3
+harmonypy>=0.0.10
+bbknn>=1.6.0
+scrublet==0.2.3
+# kb-python>=0.27

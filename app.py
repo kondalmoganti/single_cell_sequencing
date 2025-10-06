@@ -323,7 +323,8 @@ if step == "QC & Filtering":
     st.subheader("Quality Control")
     gene_prefix = st.text_input("Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')", value="MT-")
 
-    # Determine mitochondrial genes before QC metric calculation
+    # Determine mt genes BEFORE calling calculate_qc_metrics to avoid KeyError
+    # Try var_names, or if available, a gene symbol column
     var_symbols = None
     for cand in ["gene_symbols", "gene_symbol", "features", "name", "symbol"]:
         if cand in adata.var.columns:
@@ -334,9 +335,9 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    # Robust assignment whether mask is Series or ndarray
+adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
-    # Compute QC metrics
     if st.button("Compute QC metrics"):
         try:
             sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
@@ -346,7 +347,6 @@ if step == "QC & Filtering":
         except Exception as e:
             st.error(f"QC failed: {e}")
 
-    # Filtering parameters
     c1, c2, c3 = st.columns(3)
     with c1:
         n_genes_min = st.number_input("Min genes per cell", value=200, step=50)
@@ -355,66 +355,52 @@ if step == "QC & Filtering":
     with c3:
         mt_max = st.slider("Max mito %", min_value=0, max_value=100, value=20)
 
-    # Apply filtering
     if st.button("Filter cells/genes"):
         before = (adata.n_obs, adata.n_vars)
-        # Ensure QC metrics exist
+        # Ensure QC metrics are present; compute if missing
         if "n_genes_by_counts" not in adata.obs or "pct_counts_mt" not in adata.obs:
             try:
                 sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
-
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        if "pct_counts_mt" in adata.obs:
-            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
+        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
-
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
 
-    # Display QC summary
+    # Show a small QC preview if available
     cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
     if cols_to_show:
         st.write("Top cells:")
         st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
 
 # ---------------------------
+
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":
     if st.session_state.adata is None:
         st.stop()
-
     import scanpy as sc
-    import pandas as pd
-    from copy import deepcopy
-
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
     method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (optional)"])
-
     if method.startswith("pp.normalize_total"):
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
-            # keep raw counts before normalization
-            if "counts" not in adata.layers:
-                adata.layers["counts"] = adata.X.copy()
-
-            sc.pp.normalize_total(adata, target_sum=float(target_sum))
+            sc.pp.normalize_total(adata, target_sum=target_sum)
             sc.pp.log1p(adata)
-            adata.uns["_lognorm"] = True
-            st.success("Normalized and log1p-transformed. Raw counts saved in adata.layers['counts'].")
+            st.success("Normalized and log1p-transformed.")
     else:
-        st.info("SCTransform not bundled here. Consider scvi-tools or Seurat interop.")
+        st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
 
-    # ---- HVGs (shown regardless of method choice) ----
     st.subheader("Highly Variable Genes")
-
+    # Use safer default flavor for Streamlit Cloud to avoid numba ImportError on Python 3.13
     flavor_choice = st.selectbox(
         "HVG flavor",
         ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
@@ -425,37 +411,22 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
-    n_top = int(st.number_input("n_top_genes", value=2000, step=500))
-
+    n_top = st.number_input("n_top_genes", value=2000, step=500)
     if st.button("Find HVGs"):
         try:
-            kwargs = {}
-            # seurat_v3 should operate on raw counts
-            if flavor == "seurat_v3":
-                if "counts" not in adata.layers:
-                    st.warning("Counts layer missing; creating it from current X.")
-                    adata.layers["counts"] = adata.X.copy()
-                kwargs["layer"] = "counts"
-
-            sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=n_top, **kwargs)
-
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-            )
+            sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
         except ImportError as e:
-            # typical when numba isn't available (e.g., Streamlit Cloud)
-            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
-            sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=n_top)
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-            )
+            st.warning(f"{e}
+Falling back to flavor='seurat' (no numba needed).")
+            sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
         except Exception as e:
             st.error(f"HVG computation failed: {e}")
 
     if st.button("Save and continue"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")
-
 
 # ---------------------------
 # Step 4: Dimensionality Reduction
@@ -491,20 +462,63 @@ if step == "Clustering":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
+    from sklearn.cluster import KMeans
     adata = st.session_state.adata.copy()
 
-    st.subheader("Leiden/Louvain")
-    algo = st.selectbox("Algorithm", ["leiden", "louvain"], index=0)
-    resolution = st.slider("Resolution", 0.1, 2.0, 0.5, 0.1)
+    st.subheader("Clustering")
+    algo = st.selectbox(
+        "Algorithm",
+        [
+            "leiden (needs igraph)",
+            "louvain (needs igraph)",
+            "KMeans (no extra deps)",
+        ],
+        index=0,
+    )
+
+    # Common controls
+    resolution = st.slider("Resolution (graph methods)", 0.1, 2.0, 0.5, 0.1)
+    k_kmeans = st.slider("K (for KMeans)", 2, 50, 10)
+
     if st.button("Run clustering"):
-        if algo == "leiden":
-            sc.tl.leiden(adata, resolution=float(resolution))
+        try:
+            if algo.startswith("leiden"):
+                sc.tl.leiden(adata, resolution=float(resolution))
+                st.success("Leiden clustering done.")
+            elif algo.startswith("louvain"):
+                sc.tl.louvain(adata, resolution=float(resolution))
+                st.success("Louvain clustering done.")
+            else:
+                # KMeans on PCA (compute minimal PCA if needed)
+                if "X_pca" not in adata.obsm:
+                    st.info("PCA not found; computing PCA (50 comps) quickly for KMeans…")
+                    sc.pp.scale(adata, max_value=10)
+                    sc.tl.pca(adata, n_comps=50)
+                X = adata.obsm["X_pca"]
+                labels = KMeans(n_clusters=int(k_kmeans), n_init=10, random_state=0).fit_predict(X)
+                adata.obs["kmeans"] = pd.Categorical(labels.astype(str))
+                st.success("KMeans clustering done.")
+        except ImportError as e:
+            # Fall back to KMeans if igraph/leidenalg not available
+            st.warning(f"{e}. Falling back to KMeans (no igraph needed).")
+            if "X_pca" not in adata.obsm:
+                sc.pp.scale(adata, max_value=10)
+                sc.tl.pca(adata, n_comps=50)
+            X = adata.obsm["X_pca"]
+            labels = KMeans(n_clusters=int(k_kmeans), n_init=10, random_state=0).fit_predict(X)
+            adata.obs["kmeans"] = pd.Categorical(labels.astype(str))
+            st.success("KMeans clustering done.")
+        except Exception as e:
+            st.error(f"Clustering failed: {e}")
         else:
-            sc.tl.louvain(adata, resolution=float(resolution))
-        st.success("Clustering done.")
-    if st.button("Save and continue"):
-        st.session_state.adata = adata
-    key = "leiden" if "leiden" in adata.obs.columns else ("louvain" if "louvain" in adata.obs.columns else None)
+            st.session_state.adata = adata
+
+    # Determine key for plotting counts
+    key = None
+    for c in ["leiden", "louvain", "kmeans"]:
+        if c in adata.obs.columns:
+            key = c
+            break
     if key:
         fig = _umap_scatter(adata, key)
         if fig is not None:
@@ -512,6 +526,7 @@ if step == "Clustering":
         st.dataframe(adata.obs[key].value_counts().rename_axis("cluster").reset_index(name="n"))
 
 # ---------------------------
+
 # Step 6: Markers & DE
 # ---------------------------
 if step == "Markers & DE":

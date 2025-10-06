@@ -383,62 +383,79 @@ if step == "QC & Filtering":
         st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
 
 # ---------------------------
-
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":
     if st.session_state.adata is None:
         st.stop()
+
     import scanpy as sc
+    import pandas as pd
+    from copy import deepcopy
+
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
     method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (optional)"])
+
     if method.startswith("pp.normalize_total"):
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
-            sc.pp.normalize_total(adata, target_sum=target_sum)
+            # keep raw counts before normalization
+            if "counts" not in adata.layers:
+                adata.layers["counts"] = adata.X.copy()
+
+            sc.pp.normalize_total(adata, target_sum=float(target_sum))
             sc.pp.log1p(adata)
-            st.success("Normalized and log1p-transformed.")
+            adata.uns["_lognorm"] = True
+            st.success("Normalized and log1p-transformed. Raw counts saved in adata.layers['counts'].")
     else:
-        st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
+        st.info("SCTransform not bundled here. Consider scvi-tools or Seurat interop.")
 
-        st.subheader("Highly Variable Genes")
+    # ---- HVGs (shown regardless of method choice) ----
+    st.subheader("Highly Variable Genes")
 
-       # Use safer default flavor for Streamlit Cloud (avoid numba on Python 3.13)
-       flavor_choice = st.selectbox(
-           "HVG flavor",
-           ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
-       )
-       flavor_map = {
-           "cell_ranger": "cell_ranger",
-           "seurat": "seurat",
-           "seurat_v3 (needs numba)": "seurat_v3",
-       }
-       flavor = flavor_map[flavor_choice]
-   
-       n_top = st.number_input("n_top_genes", value=2000, step=500)
-   
-       if st.button("Find HVGs"):
-           try:
-               sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-               st.write(
-                   adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-               )
-           except ImportError as e:
-               st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
-               sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-               st.write(
-                   adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-               )
-           except Exception as e:
-               st.error(f"HVG computation failed: {e}")
+    flavor_choice = st.selectbox(
+        "HVG flavor",
+        ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
+    )
+    flavor_map = {
+        "cell_ranger": "cell_ranger",
+        "seurat": "seurat",
+        "seurat_v3 (needs numba)": "seurat_v3",
+    }
+    flavor = flavor_map[flavor_choice]
+    n_top = int(st.number_input("n_top_genes", value=2000, step=500))
 
+    if st.button("Find HVGs"):
+        try:
+            kwargs = {}
+            # seurat_v3 should operate on raw counts
+            if flavor == "seurat_v3":
+                if "counts" not in adata.layers:
+                    st.warning("Counts layer missing; creating it from current X.")
+                    adata.layers["counts"] = adata.X.copy()
+                kwargs["layer"] = "counts"
 
+            sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=n_top, **kwargs)
+
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
+        except ImportError as e:
+            # typical when numba isn't available (e.g., Streamlit Cloud)
+            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
+            sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=n_top)
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
+        except Exception as e:
+            st.error(f"HVG computation failed: {e}")
 
     if st.button("Save and continue"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")
+
 
 # ---------------------------
 # Step 4: Dimensionality Reduction

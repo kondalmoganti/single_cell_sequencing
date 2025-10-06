@@ -323,8 +323,7 @@ if step == "QC & Filtering":
     st.subheader("Quality Control")
     gene_prefix = st.text_input("Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')", value="MT-")
 
-    # Determine mt genes BEFORE calling calculate_qc_metrics to avoid KeyError
-    # Try var_names, or if available, a gene symbol column
+    # Determine mitochondrial genes before QC metric calculation
     var_symbols = None
     for cand in ["gene_symbols", "gene_symbol", "features", "name", "symbol"]:
         if cand in adata.var.columns:
@@ -335,9 +334,9 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    # Robust assignment whether mask is Series or ndarray
-adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
+    # Compute QC metrics
     if st.button("Compute QC metrics"):
         try:
             sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
@@ -347,6 +346,7 @@ adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
         except Exception as e:
             st.error(f"QC failed: {e}")
 
+    # Filtering parameters
     c1, c2, c3 = st.columns(3)
     with c1:
         n_genes_min = st.number_input("Min genes per cell", value=200, step=50)
@@ -355,24 +355,28 @@ adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
     with c3:
         mt_max = st.slider("Max mito %", min_value=0, max_value=100, value=20)
 
+    # Apply filtering
     if st.button("Filter cells/genes"):
         before = (adata.n_obs, adata.n_vars)
-        # Ensure QC metrics are present; compute if missing
+        # Ensure QC metrics exist
         if "n_genes_by_counts" not in adata.obs or "pct_counts_mt" not in adata.obs:
             try:
                 sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
+
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
+        if "pct_counts_mt" in adata.obs:
+            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
+
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
 
-    # Show a small QC preview if available
+    # Display QC summary
     cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
     if cols_to_show:
         st.write("Top cells:")

@@ -213,6 +213,8 @@ if step == "Load Data":
     # Demo loader (if local data folder present)
     import scanpy as sc
     from pathlib import Path
+    import numpy as np
+
     st.markdown("### 📊 Load Demo Datasets")
     demo_files = {
         "Synthetic Demo (2000 cells × 1000 genes)": "data/demo_2000cells_1000genes.h5ad",
@@ -229,45 +231,74 @@ if step == "Load Data":
                     adata = sc.read_h5ad(path)
                 elif path.suffix == ".h5":
                     adata = sc.read_10x_h5(path)
+                    # add minimal QC columns so preview isn't empty
+                    X = adata.X
+                    try:
+                        total = np.asarray(X.sum(axis=1)).ravel()
+                        n_genes = np.asarray((X > 0).sum(axis=1)).ravel()
+                    except Exception:
+                        total = X.sum(axis=1)
+                        n_genes = (X > 0).sum(axis=1)
+                    adata.obs["total_counts"] = total
+                    adata.obs["n_genes_by_counts"] = n_genes
                 else:
                     st.error("Unsupported file format.")
                     st.stop()
+
                 # Make gene names unique
                 try:
                     adata.var_names_make_unique()
                 except Exception:
                     pass
+
                 # Apply demo cap
-                adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+                adata, applied = _apply_demo_cap(
+                    adata,
+                    cap=st.session_state.demo_cap_n,
+                    seed=st.session_state.demo_cap_seed,
+                )
                 st.session_state.adata = adata
                 st.success(f"✅ Loaded {demo_choice}: {adata.n_obs} cells × {adata.n_vars} genes.")
                 if applied:
-                    st.info(f"Demo cap applied: downsampled from {adata.uns['_demo_cap']['from_n_obs']} → {adata.n_obs} cells.")
+                    st.info(
+                        f"Demo cap applied: downsampled from "
+                        f"{adata.uns['_demo_cap']['from_n_obs']} → {adata.n_obs} cells."
+                    )
             except Exception as e:
                 st.error(f"Failed to load demo: {e}")
 
     tabs = st.tabs([".h5ad", "10x MTX (.zip/.tar.gz)", "10x HDF5 (.h5)", "FASTQ → counts (advanced)"])
 
+    # -------- .h5ad upload
     with tabs[0]:
-        h5ad_file = st.file_uploader("Upload .h5ad", type=["h5ad"])  
+        h5ad_file = st.file_uploader("Upload .h5ad", type=["h5ad"])
         if h5ad_file is not None:
             raw = _cache_bytes(h5ad_file.read())
             with st.spinner("Reading .h5ad..."):
                 adata = read_h5ad_from_bytes(raw)
             st.success(f"Loaded AnnData with {adata.n_obs} cells × {adata.n_vars} genes.")
-            # Ensure unique gene names to avoid warnings
             try:
                 adata.var_names_make_unique()
             except Exception:
                 pass
-            # Apply demo cap immediately after load
-            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            adata, applied = _apply_demo_cap(
+                adata,
+                cap=st.session_state.demo_cap_n,
+                seed=st.session_state.demo_cap_seed,
+            )
             st.session_state.adata = adata
             if applied:
-                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
+                st.info(
+                    f"Demo cap applied: downsampled to {adata.n_obs} cells "
+                    f"(from {adata.uns['_demo_cap']['from_n_obs']})."
+                )
 
+    # -------- 10x MTX archive upload
     with tabs[1]:
-        mtx_archive = st.file_uploader("Upload 10x matrix archive (.zip or .tar.gz)", type=["zip", "gz", "tar", "tgz"])  
+        mtx_archive = st.file_uploader(
+            "Upload 10x matrix archive (.zip or .tar.gz)",
+            type=["zip", "gz", "tar", "tgz"],
+        )
         hint = st.text_input("Inner folder hint (optional)", value="")
         if mtx_archive is not None:
             raw = _cache_bytes(mtx_archive.read())
@@ -278,14 +309,21 @@ if step == "Load Data":
                 adata.var_names_make_unique()
             except Exception:
                 pass
-            # Apply demo cap immediately after load
-            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            adata, applied = _apply_demo_cap(
+                adata,
+                cap=st.session_state.demo_cap_n,
+                seed=st.session_state.demo_cap_seed,
+            )
             st.session_state.adata = adata
             if applied:
-                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
+                st.info(
+                    f"Demo cap applied: downsampled to {adata.n_obs} cells "
+                    f"(from {adata.uns['_demo_cap']['from_n_obs']})."
+                )
 
+    # -------- 10x HDF5 upload
     with tabs[2]:
-        h5_file = st.file_uploader("Upload 10x HDF5 (.h5)", type=["h5"])  
+        h5_file = st.file_uploader("Upload 10x HDF5 (.h5)", type=["h5"])
         if h5_file is not None:
             raw = _cache_bytes(h5_file.read())
             with st.spinner("Reading 10x HDF5..."):
@@ -295,14 +333,31 @@ if step == "Load Data":
                 adata.var_names_make_unique()
             except Exception:
                 pass
-            # Apply demo cap immediately after load
-            adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+            # add minimal QC columns so preview isn't empty
+            X = adata.X
+            try:
+                total = np.asarray(X.sum(axis=1)).ravel()
+                n_genes = np.asarray((X > 0).sum(axis=1)).ravel()
+            except Exception:
+                total = X.sum(axis=1)
+                n_genes = (X > 0).sum(axis=1)
+            adata.obs["total_counts"] = total
+            adata.obs["n_genes_by_counts"] = n_genes
+
+            adata, applied = _apply_demo_cap(
+                adata,
+                cap=st.session_state.demo_cap_n,
+                seed=st.session_state.demo_cap_seed,
+            )
             st.session_state.adata = adata
             if applied:
-                st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
+                st.info(
+                    f"Demo cap applied: downsampled to {adata.n_obs} cells "
+                    f"(from {adata.uns['_demo_cap']['from_n_obs']})."
+                )
 
+    # -------- FASTQ → counts (advanced)
     with tabs[3]:
-        st.warning("Advanced: requires kb-python or STARsolo pre-installed on the host. This may be slow/expensive.")
         st.warning("Advanced: requires kb-python or STARsolo pre-installed on the host. This may be slow/expensive.")
         run_mode = st.selectbox("Backend", ["kb-python (kallisto|bustools)", "STARsolo"], index=0)
         fq1 = st.file_uploader("Upload R1 FASTQ (gz)", type=["fastq.gz"], key="fq1")
@@ -314,14 +369,17 @@ if step == "Load Data":
             fq1_b = _cache_bytes(fq1.read())
             fq2_b = _cache_bytes(fq2.read())
             with tempfile.TemporaryDirectory() as td:
-                r1p = Path(td)/"R1.fastq.gz"; r1p.write_bytes(fq1_b)
-                r2p = Path(td)/"R2.fastq.gz"; r2p.write_bytes(fq2_b)
-                outdir = Path(td)/"out"; outdir.mkdir(exist_ok=True)
+                r1p = Path(td) / "R1.fastq.gz"; r1p.write_bytes(fq1_b)
+                r2p = Path(td) / "R2.fastq.gz"; r2p.write_bytes(fq2_b)
+                outdir = Path(td) / "out"; outdir.mkdir(exist_ok=True)
                 if run_mode.startswith("kb"):
                     cmd = [
-                        "kb", "count", "-i", str(Path(reference_path)/"index.idx"),
-                        "-g", str(Path(reference_path)/"transcripts_to_genes.txt"),
-                        "-x", "10xv3", "-o", str(outdir), str(r1p), str(r2p)
+                        "kb", "count",
+                        "-i", str(Path(reference_path) / "index.idx"),
+                        "-g", str(Path(reference_path) / "transcripts_to_genes.txt"),
+                        "-x", "10xv3",
+                        "-o", str(outdir),
+                        str(r1p), str(r2p),
                     ]
                 else:
                     cmd = [
@@ -332,32 +390,71 @@ if step == "Load Data":
                         "--readFilesIn", str(r1p), str(r2p),
                         "--readFilesCommand", "zcat",
                         "--soloFeatures", "Gene",
-                        "--outFileNamePrefix", str(Path(td)/out_name)
+                        "--outFileNamePrefix", str(Path(td) / out_name),
                     ]
                 st.info("Running: " + " ".join(cmd))
                 try:
                     subprocess.run(cmd, check=True)
                     # Try to read 10x output if present
-                    import scanpy as sc
                     mtx_dir = None
                     for p in outdir.rglob("matrix.mtx*"):
                         mtx_dir = p.parent
                         break
                     if mtx_dir is None:
                         raise RuntimeError("Did not find matrix.mtx in output")
-                    adata = sc.read_10x_mtx(mtx_dir, var_names='gene_symbols', cache=False)
-                    st.session_state.adata = adata
+                    adata = sc.read_10x_mtx(mtx_dir, var_names="gene_symbols", cache=False)
+                    # preview columns
+                    X = adata.X
+                    try:
+                        total = np.asarray(X.sum(axis=1)).ravel()
+                        n_genes = np.asarray((X > 0).sum(axis=1)).ravel()
+                    except Exception:
+                        total = X.sum(axis=1)
+                        n_genes = (X > 0).sum(axis=1)
+                    adata.obs["total_counts"] = total
+                    adata.obs["n_genes_by_counts"] = n_genes
                     st.success(f"Loaded counts with {adata.n_obs} cells × {adata.n_vars} genes.")
-                    # Apply demo cap immediately after load
-                    adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
+
+                    # Apply demo cap
+                    adata, applied = _apply_demo_cap(
+                        adata,
+                        cap=st.session_state.demo_cap_n,
+                        seed=st.session_state.demo_cap_seed,
+                    )
                     st.session_state.adata = adata
                     if applied:
-                        st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
+                        st.info(
+                            f"Demo cap applied: downsampled to {adata.n_obs} cells "
+                            f"(from {adata.uns['_demo_cap']['from_n_obs']})."
+                        )
                 except Exception as e:
                     st.error(f"FASTQ → counts failed: {e}")
 
+    # -------- Preview (always show something)
     if st.session_state.adata is not None:
-        st.dataframe(st.session_state.adata.obs.head(), use_container_width=True)
+        adata = st.session_state.adata
+        # ensure unique gene names
+        try:
+            adata.var_names_make_unique()
+        except Exception:
+            pass
+
+        st.markdown("### Preview")
+        st.write(f"**Shape:** {adata.n_obs} cells × {adata.n_vars} genes")
+
+        # show per-cell table or barcodes if empty
+        if adata.obs.shape[1] == 0:
+            st.write("No per-cell metadata yet (10x raw). Run **QC & Filtering** to compute QC columns.")
+            preview_obs = adata.obs_names.to_series().head().to_frame(name="barcode")
+            st.dataframe(preview_obs, width="stretch")
+        else:
+            st.dataframe(adata.obs.head(), width="stretch")
+
+        st.write("Gene table (first 5):")
+        if adata.var.shape[1] == 0:
+            st.dataframe(adata.var_names.to_series().head().to_frame(name="gene"), width="stretch")
+        else:
+            st.dataframe(adata.var.head(), width="stretch")
 
 # ---------------------------
 # Step 2: QC & Filtering

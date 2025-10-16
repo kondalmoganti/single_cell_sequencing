@@ -960,61 +960,60 @@ if step == "Cell Type Annotation (optional)":
     model_dir = Path("data/models")
     model_dir.mkdir(parents=True, exist_ok=True)
 
-	# ---------- Robust model fetcher (FIXED) ----------
-	def ensure_celltypist_model(model_filename: str) -> Path:
-	    """
-	    Get a CellTypist .pkl model; prefer CellTypist's downloader, then try direct URLs.
-	    Returns the local Path to the model.
-	    """
-	    target = model_dir / model_filename
-	    if target.exists():
-	        return target
-	
-	    # 1) Preferred: CellTypist's downloader (handles mirrors/cache)
-	    try:
-	        import celltypist
-	        from celltypist.models import download_models, models_path
-	
-	        with st.spinner(f"Downloading {model_filename} via CellTypist…"):
-	            stem = model_filename.replace(".pkl", "")
-	            download_models(models=[stem])  # downloads to CellTypist cache
-	            ct_dir = Path(models_path())
-	            src = ct_dir / f"{stem}.pkl"
-	            if src.exists():
-	                target.write_bytes(src.read_bytes())  # copy into our app folder
-	                st.success(f"✅ Downloaded to {target}")
-	                return target
-	            else:
-	                raise FileNotFoundError(f"Downloaded model not found at {src}")
-	
-	    # 🔧 FIX: catch the right exceptions
-	    except (ModuleNotFoundError, ImportError):
-	        st.error("No module named `celltypist`. Add `celltypist>=1.6.0` to requirements and redeploy.")
-	        raise
-	    except Exception as e:
-	        st.warning(f"CellTypist downloader failed: {e}. Trying direct URLs…")
-	
-	    # 2) Fallback: try known static hosts
-	    import urllib.request
-	    for base in [
-	        "https://celltypist.cellgeni.sanger.ac.uk/models/",
-	        "https://celltypist.sanger.ac.uk/models/",
-	    ]:
-	        try:
-	            url = base + model_filename
-	            with st.spinner(f"Downloading {model_filename} from {base} …"):
-	                urllib.request.urlretrieve(url, target)
-	            st.success(f"✅ Downloaded to {target}")
-	            return target
-	        except Exception as e:
-	            st.info(f"Fallback URL failed: {e}")
-	
-	    # 3) Final fallback
-	    st.error(
-	        f"Could not download {model_filename}. "
-	        "Upload the .pkl to data/models/ or commit it to your repo."
-	    )
-	    raise FileNotFoundError(model_filename)
+	    # ---------- Robust model fetcher ----------
+    def ensure_celltypist_model(model_filename: str) -> Path:
+        """
+        Get a CellTypist .pkl model; prefer CellTypist's downloader, then try direct URLs.
+        Returns the local Path to the model.
+        """
+        target = model_dir / model_filename
+        if target.exists():
+            return target
+
+        # 1) Preferred: CellTypist's downloader (handles mirrors/cache)
+        try:
+            import celltypist
+            from celltypist.models import download_models, models_path
+
+            with st.spinner(f"Downloading {model_filename} via CellTypist…"):
+                stem = model_filename.replace(".pkl", "")
+                download_models(models=[stem])  # downloads to CellTypist cache
+                ct_dir = Path(models_path())
+                src = ct_dir / f"{stem}.pkl"
+                if src.exists():
+                    target.write_bytes(src.read_bytes())  # copy into our app folder
+                    st.success(f"✅ Downloaded to {target}")
+                    return target
+                else:
+                    raise FileNotFoundError(f"Downloaded model not found at {src}")
+
+        except (ModuleNotFoundError, ImportError):
+            st.error("No module named `celltypist`. Add `celltypist>=1.6.0` to requirements and redeploy.")
+            raise
+        except Exception as e:
+            st.warning(f"CellTypist downloader failed: {e}. Trying direct URLs…")
+
+        # 2) Fallback: try known static hosts
+        import urllib.request
+        for base in [
+            "https://celltypist.cellgeni.sanger.ac.uk/models/",
+            "https://celltypist.sanger.ac.uk/models/",
+        ]:
+            try:
+                url = base + model_filename
+                with st.spinner(f"Downloading {model_filename} from {base} …"):
+                    urllib.request.urlretrieve(url, target)
+                st.success(f"✅ Downloaded to {target}")
+                return target
+            except Exception as e:
+                st.info(f"Fallback URL failed: {e}")
+
+        # 3) Final fallback
+        st.error(
+            f"Could not download {model_filename}. "
+            "Upload the .pkl to data/models/ or commit it to your repo."
+        )
+        raise FileNotFoundError(model_filename)
 
     # -------------------------------------------------
     # Organism selection

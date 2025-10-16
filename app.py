@@ -439,28 +439,28 @@ if step == "QC & Filtering":
 
 
 # ---------------------------
-
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
+    import pandas as pd
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
-    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (optional)"])
+    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (placeholder)"])
     if method.startswith("pp.normalize_total"):
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
-            sc.pp.normalize_total(adata, target_sum=target_sum)
+            sc.pp.normalize_total(adata, target_sum=float(target_sum))
             sc.pp.log1p(adata)
-            st.success("Normalized and log1p-transformed.")
+            st.success("✅ Normalized and log1p-transformed.")
     else:
-        st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
+        st.info("SCTransform not included here. Use scvi-tools or R interop if needed.")
 
     st.subheader("Highly Variable Genes")
-    # Use safer default flavor for Streamlit Cloud to avoid numba ImportError on Python 3.13
+
     flavor_choice = st.selectbox(
         "HVG flavor",
         ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
@@ -471,18 +471,22 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
+
     n_top = st.number_input("n_top_genes", value=2000, step=500)
+
     if st.button("Find HVGs"):
         try:
             sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
         except ImportError as e:
-          st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
-          sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-
-Falling back to flavor='seurat' (no numba needed).")
+            # Correctly closed f-string — single quotes inside are escaped
+            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
+            st.write(
+                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            )
         except Exception as e:
             st.error(f"HVG computation failed: {e}")
 

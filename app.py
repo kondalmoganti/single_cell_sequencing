@@ -959,7 +959,63 @@ if step == "Cell Type Annotation (optional)":
 
     model_dir = Path("data/models")
     model_dir.mkdir(parents=True, exist_ok=True)
-    BASE_URL = "https://celltypist.sanger.ac.uk/models/"
+
+    # ---------- Robust model fetcher ----------
+    def ensure_celltypist_model(model_filename: str) -> Path:
+        """
+        Get a CellTypist .pkl model; prefer CellTypist's downloader, then try direct URLs.
+        Returns the local Path to the model.
+        """
+        target = model_dir / model_filename
+        if target.exists():
+            return target
+
+        # 1) Preferred: CellTypist's downloader (handles mirrors/cache)
+        try:
+            import celltypist
+            from celltypist.models import download_models, models_path
+
+            with st.spinner(f"Downloading {model_filename} via CellTypist…"):
+                stem = model_filename.replace(".pkl", "")
+                download_models(models=[stem])
+                ct_dir = Path(models_path())
+                src = ct_dir / f"{stem}.pkl"
+                if src.exists():
+                    target.write_bytes(src.read_bytes())
+                    st.success(f"✅ Downloaded to {target}")
+                    return target
+                else:
+                    raise FileNotFoundError(f"Downloaded model not found at {src}")
+        except ModuleNotFoundException:
+            # extremely rare name; guard anyway
+            st.error("No module named `celltypist`. Add `celltypist>=1.6.0` to requirements and redeploy.")
+            raise
+        except ModuleNotFoundError:
+            st.error("No module named `celltypist`. Add `celltypist>=1.6.0` to requirements and redeploy.")
+            raise
+        except Exception as e:
+            st.warning(f"CellTypist downloader failed: {e}. Trying direct URLs…")
+
+        # 2) Fallback: try known static hosts
+        for base in [
+            "https://celltypist.cellgeni.sanger.ac.uk/models/",
+            "https://celltypist.sanger.ac.uk/models/",
+        ]:
+            try:
+                url = base + model_filename
+                with st.spinner(f"Downloading {model_filename} from {base} …"):
+                    urllib.request.urlretrieve(url, target)
+                st.success(f"✅ Downloaded to {target}")
+                return target
+            except Exception as e:
+                st.info(f"Fallback URL failed: {e}")
+
+        # 3) Final fallback
+        st.error(
+            f"Could not download {model_filename}. "
+            "Upload the .pkl to data/models/ or commit it to your repo."
+        )
+        raise FileNotFoundError(model_filename)
 
     # -------------------------------------------------
     # Organism selection
@@ -1000,24 +1056,10 @@ if step == "Cell Type Annotation (optional)":
             key="ct_custom_path",
         )
         model_path = Path(custom_path)
-        download_needed = False
     else:
         model_filename = organism_models[model_choice]
-        model_path = model_dir / model_filename
-        download_needed = not model_path.exists()
-
-    # -------------------------------------------------
-    # Auto-download model if missing
-    # -------------------------------------------------
-    if download_needed:
-        url = BASE_URL + model_path.name
-        with st.spinner(f"📦 Downloading model: {model_path.name} (~40–80 MB)…"):
-            try:
-                urllib.request.urlretrieve(url, model_path)
-                st.success(f"✅ Downloaded to {model_path}")
-            except Exception as e:
-                st.error(f"Failed to download {model_path.name}: {e}")
-                st.stop()
+        # Use robust downloader + cache
+        model_path = ensure_celltypist_model(model_filename)
 
     # -------------------------------------------------
     # Run CellTypist
@@ -1075,7 +1117,7 @@ if step == "Cell Type Annotation (optional)":
             st.info("Azimuth integration planned — will require R or REST API backend.")
     with col2:
         if st.button("SingleR (reference-based in R)", key="singler_placeholder"):
-            st.info("SingleR integration planned — via bioconductor REST service.")
+            st.info("SingleR integration planned — via Bioconductor REST service.")
 
     st.caption("You can add your own pretrained CellTypist models under `data/models/`.")
     if st.button("Save and continue", key="celltypist_save"):

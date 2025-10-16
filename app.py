@@ -694,6 +694,7 @@ if step == "Dimensionality Reduction":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
+    import pandas as pd  # needed for dtype checks
 
     adata = st.session_state.adata.copy()
     st.subheader("PCA / Neighbors / UMAP")
@@ -703,15 +704,14 @@ if step == "Dimensionality Reduction":
     n_pcs = st.slider("Number of PCs", 10, 100, 50, key="dr_n_pcs")
     neighbors_k = st.slider("Neighbors k", 5, 50, 15, key="dr_neighbors_k")
 
-    # ✅ Only ONE button; use its return value to run DR
+    # Run DR once
     if st.button("Run DR", key="dr_run"):
         if "X_scvi" in adata.obsm:
-            # Use SCVI latent directly
             st.info("Using SCVI latent representation for neighbors/UMAP.")
             sc.pp.neighbors(adata, use_rep="X_scvi", n_neighbors=int(neighbors_k))
             sc.tl.umap(adata)
         else:
-            # Optionally restrict to HVGs for DR, but keep full object
+            # Work on a temporary slice if HVGs are requested
             adata_use = adata
             if use_hvg and "highly_variable" in adata.var.columns:
                 adata_use = adata[:, adata.var["highly_variable"]].copy()
@@ -721,7 +721,7 @@ if step == "Dimensionality Reduction":
             sc.pp.neighbors(adata_use, n_neighbors=int(neighbors_k), n_pcs=int(n_pcs))
             sc.tl.umap(adata_use)
 
-            # Copy embeddings / graphs back to the full object so we don't lose genes
+            # Copy embeddings/graphs back to the full object
             for k in ["X_pca", "X_umap"]:
                 if k in adata_use.obsm:
                     adata.obsm[k] = adata_use.obsm[k]
@@ -731,14 +731,15 @@ if step == "Dimensionality Reduction":
 
         st.session_state.adata = adata
         st.success("Computed neighbors and UMAP.")
-       
+
+    # --- Choose coloring and plot ---
     candidate_cols = []
     for c in adata.obs.columns:
         s = adata.obs[c]
         if pd.api.types.is_categorical_dtype(s) or s.dtype == object:
             if s.nunique() <= 50:
                 candidate_cols.append(c)
-    # ensure common cluster keys appear first if present
+    # Prefer cluster columns first
     for preferred in ["leiden", "louvain", "kmeans"]:
         if preferred in candidate_cols:
             candidate_cols.remove(preferred)
@@ -750,17 +751,22 @@ if step == "Dimensionality Reduction":
         key="dr_color_by",
     )
     color_key = None if color_by == "(none)" else color_by
-    # Plot if available
+
     if "X_umap" in adata.obsm:
         fig = _umap_scatter(adata, color_key=color_key)
         if fig is not None:
-            st.plotly_chart(fig, width="stretch", config={ "displaylogo": False, "responsive": True})
+            st.plotly_chart(
+                fig,
+                width="stretch",
+                config={"displaylogo": False, "responsive": True},
+            )
     else:
         st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
 
     if st.button("Save and continue", key="dr_save"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")
+
 
 # ---------------------------
 # Step 5: Clustering
@@ -769,16 +775,17 @@ if step == "Clustering":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
-    import pandas as pd              # <-- needed for pd.Categorical
+    import pandas as pd
     from sklearn.cluster import KMeans
-    adata = st.session_state.adata.copy()
 
+    adata = st.session_state.adata.copy()
     st.subheader("Clustering")
+
     algo = st.selectbox(
         "Algorithm",
         ["leiden (needs igraph)", "louvain (needs igraph)", "KMeans (no extra deps)"],
         index=0,
-        key="cluster_algo",          # <-- unique key
+        key="cluster_algo",
     )
 
     # Controls with unique keys
@@ -787,8 +794,7 @@ if step == "Clustering":
     )
     k_kmeans = st.slider("K (for KMeans)", 2, 50, 10, key="cluster_k_kmeans")
 
-    run_cluster = st.button("Run clustering", key="cluster_run")  # <-- unique key
-    if run_cluster:
+    if st.button("Run clustering", key="cluster_run"):
         try:
             if algo.startswith("leiden"):
                 sc.tl.leiden(adata, resolution=float(resolution))
@@ -807,7 +813,7 @@ if step == "Clustering":
                 adata.obs["kmeans"] = pd.Categorical(labels.astype(str))
                 st.success("KMeans clustering done.")
         except ImportError as e:
-            # Fall back to KMeans if igraph/leidenalg not available
+            # Fall back to KMeans if igraph/leidenalg/louvain missing
             st.warning(f"{e}. Falling back to KMeans (no igraph needed).")
             if "X_pca" not in adata.obsm:
                 sc.pp.scale(adata, max_value=10)
@@ -821,22 +827,34 @@ if step == "Clustering":
         else:
             st.session_state.adata = adata
 
-    # Determine key for plotting counts
-    key = None
+    # ---- Visualize clusters only ----
+    cluster_key = None
     for c in ["leiden", "louvain", "kmeans"]:
         if c in adata.obs.columns:
-            key = c
+            cluster_key = c
             break
-    if key:
-        fig = _umap_scatter(adata, key)
-        if fig is not None:
-            st.plotly_chart(fig, width="stretch")
+
+    if cluster_key is not None:
+        # Let the user choose among available cluster annotations
+        cluster_opts = [c for c in ["leiden", "louvain", "kmeans"] if c in adata.obs.columns]
+        cluster_key = st.selectbox("Color UMAP by cluster", cluster_opts, key="cluster_color_key")
+
+        if "X_umap" in adata.obsm:
+            fig = _umap_scatter(adata, color_key=cluster_key)
+            if fig is not None:
+                st.plotly_chart(
+                    fig,
+                    width="stretch",
+                    config={"displaylogo": False, "responsive": True},
+                )
+
         st.dataframe(
-            adata.obs[key].value_counts().rename_axis("cluster").reset_index(name="n"),
+            adata.obs[cluster_key].value_counts().rename_axis("cluster").reset_index(name="n"),
             width="stretch",
         )
+    else:
+        st.info("No cluster labels found yet. Run clustering above and then visualize here.")
 
-    # Optional: separate save button with its own key
     if st.button("Save and continue", key="cluster_save"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")

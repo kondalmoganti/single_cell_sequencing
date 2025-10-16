@@ -727,12 +727,30 @@ if step == "Dimensionality Reduction":
 
         st.session_state.adata = adata
         st.success("Computed neighbors and UMAP.")
+       
+    candidate_cols = []
+    for c in adata.obs.columns:
+        s = adata.obs[c]
+        if pd.api.types.is_categorical_dtype(s) or s.dtype == object:
+            if s.nunique() <= 50:
+                candidate_cols.append(c)
+    # ensure common cluster keys appear first if present
+    for preferred in ["leiden", "louvain", "kmeans"]:
+        if preferred in candidate_cols:
+            candidate_cols.remove(preferred)
+            candidate_cols.insert(0, preferred)
 
+    color_by = st.selectbox(
+        "Color UMAP by",
+        options=["(none)"] + candidate_cols,
+        key="dr_color_by",
+    )
+    color_key = None if color_by == "(none)" else color_by
     # Plot if available
     if "X_umap" in adata.obsm:
-        fig = _umap_scatter(adata, color_key)
+        fig = _umap_scatter(adata, color_key=color_key)
         if fig is not None:
-            st.plotly_chart(fig, width="stretch", config={ "displaylogo": False, "responsive": True,},)
+            st.plotly_chart(fig, width="stretch", config={ "displaylogo": False, "responsive": True})
     else:
         st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
 

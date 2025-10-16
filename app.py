@@ -196,7 +196,7 @@ step = st.sidebar.radio(
         "QC & Filtering",
         "Normalize & HVGs",
         "Embedding & Clustering",
-        "Differential Expression",
+        "Markers & DE",
         "Cell Type Annotation (optional)",
         "(Optional) Trajectory",
         "Export",

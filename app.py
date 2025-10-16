@@ -209,37 +209,37 @@ if "adata" not in st.session_state:
 # ---------------------------
 if step == "Load Data":
     st.subheader("Load counts / AnnData")
-       import scanpy as sc
-       from pathlib import Path
-   
-       st.markdown("### 📊 Load Demo Datasets")
-   
-       # Define demo dataset paths
-       demo_files = {
-           "Synthetic Demo (2000 cells × 1000 genes)": "data/demo_2000cells_1000genes.h5ad",
-           "PBMC 1k v3 (10x HDF5)": "data/pbmc_1k_v3_filtered_feature_bc_matrix.h5",
-       }
-   
-       demo_choice = st.selectbox("Choose a demo dataset:", list(demo_files.keys()))
-   
-       if st.button("Load Selected Demo"):
-           path = Path(demo_files[demo_choice])
-           if not path.exists():
-               st.error(f"Demo file not found: {path}")
-           else:
-               try:
-                   if path.suffix == ".h5ad":
-                       adata = sc.read_h5ad(path)
-                   elif path.suffix == ".h5":
-                       adata = sc.read_10x_h5(path)
-                   else:
-                       st.error("Unsupported file format.")
-                       st.stop()
-   
-                   st.session_state.adata = adata
-                   st.success(f"✅ Loaded {demo_choice}: {adata.n_obs} cells × {adata.n_vars} genes.")
-               except Exception as e:
-                   st.error(f"Failed to load demo: {e}")
+    import scanpy as sc
+    from pathlib import Path
+
+    st.markdown("### 📊 Load Demo Datasets")
+
+    # Define demo dataset paths
+    demo_files = {
+        "Synthetic Demo (2000 cells × 1000 genes)": "data/demo_2000cells_1000genes.h5ad",
+        "PBMC 1k v3 (10x HDF5)": "data/pbmc_1k_v3_filtered_feature_bc_matrix.h5",
+    }
+
+    demo_choice = st.selectbox("Choose a demo dataset:", list(demo_files.keys()))
+
+    if st.button("Load Selected Demo"):
+        path = Path(demo_files[demo_choice])
+        if not path.exists():
+            st.error(f"Demo file not found: {path}")
+        else:
+            try:
+                if path.suffix == ".h5ad":
+                    adata = sc.read_h5ad(path)
+                elif path.suffix == ".h5":
+                    adata = sc.read_10x_h5(path)
+                else:
+                    st.error("Unsupported file format.")
+                    st.stop()
+
+                st.session_state.adata = adata
+                st.success(f"✅ Loaded {demo_choice}: {adata.n_obs} cells × {adata.n_vars} genes.")
+            except Exception as e:
+                st.error(f"Failed to load demo: {e}")
 
     tabs = st.tabs([".h5ad", "10x MTX (.zip/.tar.gz)", "10x HDF5 (.h5)", "FASTQ → counts (advanced)"])
 

@@ -208,20 +208,17 @@ if "adata" not in st.session_state:
 # Step 1: Load Data
 # ---------------------------
 if step == "Load Data":
-    st.subheader("Load counts / AnnData")
+    st.subheader("Upload or Load Data")
+
+    # Demo loader (if local data folder present)
     import scanpy as sc
     from pathlib import Path
-
     st.markdown("### 📊 Load Demo Datasets")
-
-    # Define demo dataset paths
     demo_files = {
         "Synthetic Demo (2000 cells × 1000 genes)": "data/demo_2000cells_1000genes.h5ad",
         "PBMC 1k v3 (10x HDF5)": "data/pbmc_1k_v3_filtered_feature_bc_matrix.h5",
     }
-
     demo_choice = st.selectbox("Choose a demo dataset:", list(demo_files.keys()))
-
     if st.button("Load Selected Demo"):
         path = Path(demo_files[demo_choice])
         if not path.exists():
@@ -235,9 +232,17 @@ if step == "Load Data":
                 else:
                     st.error("Unsupported file format.")
                     st.stop()
-
+                # Make gene names unique
+                try:
+                    adata.var_names_make_unique()
+                except Exception:
+                    pass
+                # Apply demo cap
+                adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
                 st.session_state.adata = adata
                 st.success(f"✅ Loaded {demo_choice}: {adata.n_obs} cells × {adata.n_vars} genes.")
+                if applied:
+                    st.info(f"Demo cap applied: downsampled from {adata.uns['_demo_cap']['from_n_obs']} → {adata.n_obs} cells.")
             except Exception as e:
                 st.error(f"Failed to load demo: {e}")
 
@@ -249,8 +254,12 @@ if step == "Load Data":
             raw = _cache_bytes(h5ad_file.read())
             with st.spinner("Reading .h5ad..."):
                 adata = read_h5ad_from_bytes(raw)
-            st.session_state.adata = adata
             st.success(f"Loaded AnnData with {adata.n_obs} cells × {adata.n_vars} genes.")
+            # Ensure unique gene names to avoid warnings
+            try:
+                adata.var_names_make_unique()
+            except Exception:
+                pass
             # Apply demo cap immediately after load
             adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
             st.session_state.adata = adata
@@ -264,8 +273,11 @@ if step == "Load Data":
             raw = _cache_bytes(mtx_archive.read())
             with st.spinner("Reading 10x MTX..."):
                 adata = read_10x_mtx(raw, inner_dir_hint=hint or None)
-            st.session_state.adata = adata
             st.success(f"Loaded matrix with {adata.n_obs} cells × {adata.n_vars} genes.")
+            try:
+                adata.var_names_make_unique()
+            except Exception:
+                pass
             # Apply demo cap immediately after load
             adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
             st.session_state.adata = adata
@@ -278,8 +290,11 @@ if step == "Load Data":
             raw = _cache_bytes(h5_file.read())
             with st.spinner("Reading 10x HDF5..."):
                 adata = read_10x_h5(raw)
-            st.session_state.adata = adata
             st.success(f"Loaded matrix with {adata.n_obs} cells × {adata.n_vars} genes.")
+            try:
+                adata.var_names_make_unique()
+            except Exception:
+                pass
             # Apply demo cap immediately after load
             adata, applied = _apply_demo_cap(adata, cap=st.session_state.demo_cap_n, seed=st.session_state.demo_cap_seed)
             st.session_state.adata = adata
@@ -287,6 +302,7 @@ if step == "Load Data":
                 st.info(f"Demo cap applied: downsampled to {adata.n_obs} cells (from {adata.uns['_demo_cap']['from_n_obs']}).")
 
     with tabs[3]:
+        st.warning("Advanced: requires kb-python or STARsolo pre-installed on the host. This may be slow/expensive.")
         st.warning("Advanced: requires kb-python or STARsolo pre-installed on the host. This may be slow/expensive.")
         run_mode = st.selectbox("Backend", ["kb-python (kallisto|bustools)", "STARsolo"], index=0)
         fq1 = st.file_uploader("Upload R1 FASTQ (gz)", type=["fastq.gz"], key="fq1")
@@ -353,12 +369,10 @@ if step == "QC & Filtering":
     adata = st.session_state.adata.copy()
 
     st.subheader("Quality Control")
-    gene_prefix = st.text_input(
-        "Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')",
-        value="MT-",
-    )
+    gene_prefix = st.text_input("Mitochondrial gene prefix (human: 'MT-', mouse: 'mt-')", value="MT-")
 
-    # Determine mitochondrial genes before QC metric calculation
+    # Determine mt genes BEFORE calling calculate_qc_metrics to avoid KeyError
+    # Try var_names, or if available, a gene symbol column
     var_symbols = None
     for cand in ["gene_symbols", "gene_symbol", "features", "name", "symbol"]:
         if cand in adata.var.columns:
@@ -369,22 +383,18 @@ if step == "QC & Filtering":
 
     # Case-insensitive prefix match
     mt_genes_mask = var_symbols.str.upper().str.startswith(gene_prefix.upper())
-    adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
+    # Robust assignment whether mask is Series or ndarray
+adata.var["mt"] = np.asarray(mt_genes_mask).astype(bool)
 
-    # Compute QC metrics
     if st.button("Compute QC metrics"):
         try:
             sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             st.success("QC metrics computed.")
         except KeyError:
-            st.error(
-                "Could not compute QC metrics: 'mt' column missing in adata.var. "
-                "Please check mitochondrial prefix."
-            )
+            st.error("Could not compute QC metrics: 'mt' column missing in adata.var. Please check mitochondrial prefix.")
         except Exception as e:
             st.error(f"QC failed: {e}")
 
-    # Filtering parameters
     c1, c2, c3 = st.columns(3)
     with c1:
         n_genes_min = st.number_input("Min genes per cell", value=200, step=50)
@@ -393,41 +403,31 @@ if step == "QC & Filtering":
     with c3:
         mt_max = st.slider("Max mito %", min_value=0, max_value=100, value=20)
 
-    # Apply filtering
     if st.button("Filter cells/genes"):
         before = (adata.n_obs, adata.n_vars)
-        # Ensure QC metrics exist
+        # Ensure QC metrics are present; compute if missing
         if "n_genes_by_counts" not in adata.obs or "pct_counts_mt" not in adata.obs:
             try:
                 sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
             except Exception as e:
                 st.error(f"QC metrics missing and failed to compute: {e}")
                 st.stop()
-
         sc.pp.filter_cells(adata, min_genes=int(n_genes_min))
         adata = adata[adata.obs["n_genes_by_counts"] <= int(n_genes_max)].copy()
-        if "pct_counts_mt" in adata.obs:
-            adata = adata[adata.obs["pct_counts_mt"] <= float(mt_max)].copy()
+        adata = adata[adata.obs.get("pct_counts_mt", 0) <= float(mt_max)].copy()
         sc.pp.filter_genes(adata, min_cells=3)
-
         after = (adata.n_obs, adata.n_vars)
         st.info(f"Shape: {before} → {after}")
         st.session_state.adata = adata
 
-    # Display QC summary
-    cols_to_show = [
-        c
-        for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"]
-        if c in adata.obs.columns
-    ]
+    # Show a small QC preview if available
+    cols_to_show = [c for c in ["n_genes_by_counts", "total_counts", "pct_counts_mt"] if c in adata.obs.columns]
     if cols_to_show:
         st.write("Top cells:")
-        st.dataframe(
-            adata.obs[cols_to_show].head(),
-            use_container_width=True,
-        )
+        st.dataframe(adata.obs[cols_to_show].head(), use_container_width=True)
 
 # ---------------------------
+
 # Step 3: Normalize & HVGs
 # ---------------------------
 if step == "Normalize & HVGs":
@@ -437,19 +437,18 @@ if step == "Normalize & HVGs":
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
-    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (placeholder)"])
+    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (optional)"])
     if method.startswith("pp.normalize_total"):
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
-            sc.pp.normalize_total(adata, target_sum=float(target_sum))
+            sc.pp.normalize_total(adata, target_sum=target_sum)
             sc.pp.log1p(adata)
             st.success("Normalized and log1p-transformed.")
     else:
-        st.info("SCTransform is not bundled. Consider scvi-tools or R interop if needed.")
+        st.info("SCTransform not included by default. Consider sctransform via scvi-tools or Seurat interop.")
 
     st.subheader("Highly Variable Genes")
-
-    # Safer defaults for Streamlit Cloud (avoid numba dependency on 3.13)
+    # Use safer default flavor for Streamlit Cloud to avoid numba ImportError on Python 3.13
     flavor_choice = st.selectbox(
         "HVG flavor",
         ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
@@ -460,21 +459,16 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
-
     n_top = st.number_input("n_top_genes", value=2000, step=500)
-
     if st.button("Find HVGs"):
         try:
             sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-            )
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
         except ImportError as e:
-            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
+            st.warning(f"{e}
+Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
-            )
+            st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
         except Exception as e:
             st.error(f"HVG computation failed: {e}")
 
@@ -507,7 +501,7 @@ if step == "Dimensionality Reduction":
         st.session_state.adata = adata
     fig = _umap_scatter(adata)
     if fig is not None:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 # ---------------------------
 # Step 5: Clustering
@@ -576,7 +570,7 @@ if step == "Clustering":
     if key:
         fig = _umap_scatter(adata, key)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         st.dataframe(adata.obs[key].value_counts().rename_axis("cluster").reset_index(name="n"))
 
 # ---------------------------
@@ -599,7 +593,7 @@ if step == "Markers & DE":
         if not df.empty:
             # Show top_n per group
             df_top = df.sort_values(["group", "pval_adj", "score"], ascending=[True, True, False]).groupby("group").head(int(top_n))
-            st.dataframe(df_top, use_container_width=True)
+            st.dataframe(df_top, width='stretch')
         else:
             st.info("No DE results found.")
     if st.button("Save and continue"):
@@ -632,7 +626,7 @@ if step == "Cell Type Annotation (optional)":
     if key:
         fig = _umap_scatter(adata, key)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 # ---------------------------
 # Step 8: (Optional) Trajectory

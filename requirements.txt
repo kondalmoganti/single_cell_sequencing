@@ -12,3 +12,4 @@ leidenalg>=0.10
 scvi-tools>=1.0,<2
 torch>=2.2; platform_system!="Darwin"  # torch is pulled by scvi-tools, this line helps Cloud resolvers
 louvain>=0.8
+celltypist>=1.6.0

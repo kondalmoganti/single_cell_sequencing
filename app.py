@@ -684,25 +684,26 @@ if step == "Clustering":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
+    import pandas as pd              # <-- needed for pd.Categorical
     from sklearn.cluster import KMeans
     adata = st.session_state.adata.copy()
 
     st.subheader("Clustering")
     algo = st.selectbox(
         "Algorithm",
-        [
-            "leiden (needs igraph)",
-            "louvain (needs igraph)",
-            "KMeans (no extra deps)",
-        ],
+        ["leiden (needs igraph)", "louvain (needs igraph)", "KMeans (no extra deps)"],
         index=0,
+        key="cluster_algo",          # <-- unique key
     )
 
-    # Common controls
-    resolution = st.slider("Resolution (graph methods)", 0.1, 2.0, 0.5, 0.1)
-    k_kmeans = st.slider("K (for KMeans)", 2, 50, 10)
+    # Controls with unique keys
+    resolution = st.slider(
+        "Resolution (graph methods)", 0.1, 2.0, 0.5, 0.1, key="cluster_resolution"
+    )
+    k_kmeans = st.slider("K (for KMeans)", 2, 50, 10, key="cluster_k_kmeans")
 
-    if st.button("Run clustering"):
+    run_cluster = st.button("Run clustering", key="cluster_run")  # <-- unique key
+    if run_cluster:
         try:
             if algo.startswith("leiden"):
                 sc.tl.leiden(adata, resolution=float(resolution))
@@ -744,8 +745,16 @@ if step == "Clustering":
     if key:
         fig = _umap_scatter(adata, key)
         if fig is not None:
-            st.plotly_chart(fig, width='stretch')
-        st.dataframe(adata.obs[key].value_counts().rename_axis("cluster").reset_index(name="n"))
+            st.plotly_chart(fig, width="stretch")
+        st.dataframe(
+            adata.obs[key].value_counts().rename_axis("cluster").reset_index(name="n"),
+            width="stretch",
+        )
+
+    # Optional: separate save button with its own key
+    if st.button("Save and continue", key="cluster_save"):
+        st.session_state.adata = adata
+        st.success("Saved updates to session.")
 
 # ---------------------------
 

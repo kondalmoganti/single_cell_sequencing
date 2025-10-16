@@ -940,76 +940,101 @@ if step == "Markers & DE":
 if step == "Cell Type Annotation (optional)":
     if st.session_state.adata is None:
         st.stop()
+
     import scanpy as sc
     import pandas as pd
     import numpy as np
     from pathlib import Path
     import urllib.request
 
-    st.subheader("CellTypist (optional)")
+    st.subheader("Cell Type Annotation (optional)")
     st.markdown(
-        "Automatic cell-type annotation using pretrained CellTypist models. "
-        "Models are downloaded on-demand and cached in **data/models/**."
-    )
+        """
+        This step uses **pretrained CellTypist models** (and optionally other tools)
+        to automatically assign cell-type identities based on transcriptomic profiles.
 
-    # -------- Model catalog (add/remove as you like) --------
-    MODEL_CATALOG = {
-        "Human Immune (low-res)":  "Immune_All_Low.pkl",
-        "Human Immune (high-res)": "Immune_All_High.pkl",
-        "Mouse (all tissues, low-res)": "Mouse_All_Low.pkl",
-        "Human Lung (low-res)": "Human_Lung_Low.pkl",
-    }
-    BASE_URL = "https://celltypist.sanger.ac.uk/models/"
+        You can choose between **Human** and **Mouse** models and run annotation directly.
+        """
+    )
 
     model_dir = Path("data/models")
     model_dir.mkdir(parents=True, exist_ok=True)
+    BASE_URL = "https://celltypist.sanger.ac.uk/models/"
 
-    # UI: pick a catalog model or custom path
-    choice = st.selectbox(
-        "Choose a model",
-        list(MODEL_CATALOG.keys()) + ["Custom (.pkl path)"],
+    # -------------------------------------------------
+    # Organism selection
+    # -------------------------------------------------
+    organism = st.selectbox("Organism", ["Human", "Mouse"], key="ct_organism")
+
+    # -------------------------------------------------
+    # Model catalog (filtered by organism)
+    # -------------------------------------------------
+    MODEL_CATALOG = {
+        "Human": {
+            "Immune (low-res)": "Immune_All_Low.pkl",
+            "Immune (high-res)": "Immune_All_High.pkl",
+            "All tissues (low-res)": "Human_All_Low.pkl",
+            "Lung (low-res)": "Human_Lung_Low.pkl",
+            "PBMC (blood)": "Human_PBMC_Low.pkl",
+        },
+        "Mouse": {
+            "All tissues (low-res)": "Mouse_All_Low.pkl",
+            "Immune (low-res)": "Mouse_Immune_Low.pkl",
+            "Brain (low-res)": "Mouse_Brain_Low.pkl",
+        },
+    }
+
+    organism_models = MODEL_CATALOG[organism]
+
+    model_choice = st.selectbox(
+        f"Choose {organism} model",
+        list(organism_models.keys()) + ["Custom (.pkl path)"],
         key="ct_model_choice",
     )
 
-    custom_path = None
-    if choice == "Custom (.pkl path)":
+    # Handle model path logic
+    if model_choice == "Custom (.pkl path)":
         custom_path = st.text_input(
-            "Enter full path to a .pkl model",
+            "Enter full path to your .pkl model file",
             value=str(model_dir / "Your_Model.pkl"),
             key="ct_custom_path",
         )
         model_path = Path(custom_path)
         download_needed = False
     else:
-        filename = MODEL_CATALOG[choice]
-        model_path = model_dir / filename
+        model_filename = organism_models[model_choice]
+        model_path = model_dir / model_filename
         download_needed = not model_path.exists()
 
-    # Download if needed (only for catalog models)
+    # -------------------------------------------------
+    # Auto-download model if missing
+    # -------------------------------------------------
     if download_needed:
         url = BASE_URL + model_path.name
-        with st.spinner(f"Downloading model: {model_path.name} …"):
+        with st.spinner(f"📦 Downloading model: {model_path.name} (~40–80 MB)…"):
             try:
                 urllib.request.urlretrieve(url, model_path)
-                st.success(f"Downloaded to {model_path}")
+                st.success(f"✅ Downloaded to {model_path}")
             except Exception as e:
                 st.error(f"Failed to download {model_path.name}: {e}")
                 st.stop()
 
+    # -------------------------------------------------
     # Run CellTypist
+    # -------------------------------------------------
     if st.button("Run CellTypist", key="celltypist_run"):
         try:
             import celltypist
 
             adata = st.session_state.adata.copy()
-            with st.spinner(f"Annotating cells with {model_path.name}…"):
-                pred = celltypist.annotate(adata, model=str(model_path))
-                adata.obs["celltypist_label"] = pred.predicted_labels
+            with st.spinner(f"Annotating cells using {model_path.name}…"):
+                predictions = celltypist.annotate(adata, model=str(model_path))
+                adata.obs["celltypist_label"] = predictions.predicted_labels
 
             st.session_state.adata = adata
-            st.success("✅ CellTypist annotation complete.")
+            st.success(f"✅ CellTypist annotation complete using {model_choice}")
 
-            # Summary table
+            # Display summary
             st.dataframe(
                 adata.obs["celltypist_label"].value_counts()
                 .rename_axis("Cell Type")
@@ -1017,7 +1042,7 @@ if step == "Cell Type Annotation (optional)":
                 width="stretch",
             )
 
-            # UMAP colored by predicted type (if available)
+            # UMAP visualization if available
             if "X_umap" in adata.obsm:
                 fig = _umap_scatter(adata, color_key="celltypist_label")
                 if fig is not None:
@@ -1027,18 +1052,34 @@ if step == "Cell Type Annotation (optional)":
                         config={"displaylogo": False, "responsive": True},
                     )
             else:
-                st.info("No UMAP found. Compute embedding first to visualize labels.")
+                st.info("UMAP not found. Compute embedding before visualization.")
 
         except ModuleNotFoundError:
             st.error(
-                "No module named `celltypist`. "
-                "Add `celltypist>=1.6.0` to requirements.txt and redeploy."
+                "❌ No module named `celltypist`. "
+                "Please add `celltypist>=1.6.0` to your requirements.txt and redeploy."
             )
         except Exception as e:
             st.error(f"CellTypist failed: {e}")
 
+    st.divider()
+
+    # -------------------------------------------------
+    # Future: other annotation tools
+    # -------------------------------------------------
+    st.markdown("### 🧩 Other annotation options (coming soon)")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Azimuth (via Seurat reference)", key="azimuth_placeholder"):
+            st.info("Azimuth integration planned — will require R or REST API backend.")
+    with col2:
+        if st.button("SingleR (reference-based in R)", key="singler_placeholder"):
+            st.info("SingleR integration planned — via bioconductor REST service.")
+
+    st.caption("You can add your own pretrained CellTypist models under `data/models/`.")
     if st.button("Save and continue", key="celltypist_save"):
-        st.success("Saved CellTypist annotations to session.")
+        st.success("Saved annotations to session.")
 
 # ---------------------------
 # Step 8: (Optional) Trajectory

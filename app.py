@@ -644,38 +644,55 @@ if step == "Dimensionality Reduction":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
-    adata = st.session_state.adata.copy()
 
+    adata = st.session_state.adata.copy()
     st.subheader("PCA / Neighbors / UMAP")
+
+    # Controls (unique keys)
     use_hvg = st.checkbox("Use only HVGs", value=True, key="dr_use_hvg")
     n_pcs = st.slider("Number of PCs", 10, 100, 50, key="dr_n_pcs")
     neighbors_k = st.slider("Neighbors k", 5, 50, 15, key="dr_neighbors_k")
-    run_dr = st.button("Run DR", key="dr_run")
-    if st.button("Run DR"):
-        use_hvg = st.checkbox("Use only HVGs", value=True)
-        n_pcs = st.slider("Number of PCs", 10, 100, 50)
-        neighbors_k = st.slider("Neighbors k", 5, 50, 15)
 
-        # If SCVI latent exists, use it directly for neighbors/UMAP
+    # ✅ Only ONE button; use its return value to run DR
+    if st.button("Run DR", key="dr_run"):
         if "X_scvi" in adata.obsm:
+            # Use SCVI latent directly
             st.info("Using SCVI latent representation for neighbors/UMAP.")
             sc.pp.neighbors(adata, use_rep="X_scvi", n_neighbors=int(neighbors_k))
             sc.tl.umap(adata)
         else:
+            # Optionally restrict to HVGs for DR, but keep full object
+            adata_use = adata
             if use_hvg and "highly_variable" in adata.var.columns:
-                adata = adata[:, adata.var["highly_variable"]].copy()
-            sc.pp.scale(adata, max_value=10)
-            sc.tl.pca(adata, n_comps=int(n_pcs))
-            sc.pp.neighbors(adata, n_neighbors=int(neighbors_k), n_pcs=int(n_pcs))
-            sc.tl.umap(adata)
+                adata_use = adata[:, adata.var["highly_variable"]].copy()
 
+            sc.pp.scale(adata_use, max_value=10)
+            sc.tl.pca(adata_use, n_comps=int(n_pcs))
+            sc.pp.neighbors(adata_use, n_neighbors=int(neighbors_k), n_pcs=int(n_pcs))
+            sc.tl.umap(adata_use)
+
+            # Copy embeddings / graphs back to the full object so we don't lose genes
+            for k in ["X_pca", "X_umap"]:
+                if k in adata_use.obsm:
+                    adata.obsm[k] = adata_use.obsm[k]
+            for k in ["distances", "connectivities"]:
+                if k in adata_use.obsp:
+                    adata.obsp[k] = adata_use.obsp[k]
+
+        st.session_state.adata = adata
         st.success("Computed neighbors and UMAP.")
+
+    # Plot if available
+    if "X_umap" in adata.obsm:
+        fig = _umap_scatter(adata)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch")
+    else:
+        st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
+
     if st.button("Save and continue", key="dr_save"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")
-    fig = _umap_scatter(adata)
-    if fig is not None:
-        st.plotly_chart(fig, width='stretch')
 
 # ---------------------------
 # Step 5: Clustering

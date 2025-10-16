@@ -935,33 +935,110 @@ if step == "Markers & DE":
             st.error(f"DE failed: {e}")
 
 # ---------------------------
-# Step 7: Cell Type Annotation
+# Step 7: Cell Type Annotation (optional)
 # ---------------------------
 if step == "Cell Type Annotation (optional)":
     if st.session_state.adata is None:
         st.stop()
-    adata = st.session_state.adata.copy()
+    import scanpy as sc
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+    import urllib.request
+
     st.subheader("CellTypist (optional)")
-    st.caption("Requires `pip install celltypist` and a downloaded model.")
-    model_path = st.text_input("CellTypist model path (e.g., Immune_All_Low.pkl)", value="")
-    if st.button("Run CellTypist"):
+    st.markdown(
+        "Automatic cell-type annotation using pretrained CellTypist models. "
+        "Models are downloaded on-demand and cached in **data/models/**."
+    )
+
+    # -------- Model catalog (add/remove as you like) --------
+    MODEL_CATALOG = {
+        "Human Immune (low-res)":  "Immune_All_Low.pkl",
+        "Human Immune (high-res)": "Immune_All_High.pkl",
+        "Mouse (all tissues, low-res)": "Mouse_All_Low.pkl",
+        "Human Lung (low-res)": "Human_Lung_Low.pkl",
+    }
+    BASE_URL = "https://celltypist.sanger.ac.uk/models/"
+
+    model_dir = Path("data/models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    # UI: pick a catalog model or custom path
+    choice = st.selectbox(
+        "Choose a model",
+        list(MODEL_CATALOG.keys()) + ["Custom (.pkl path)"],
+        key="ct_model_choice",
+    )
+
+    custom_path = None
+    if choice == "Custom (.pkl path)":
+        custom_path = st.text_input(
+            "Enter full path to a .pkl model",
+            value=str(model_dir / "Your_Model.pkl"),
+            key="ct_custom_path",
+        )
+        model_path = Path(custom_path)
+        download_needed = False
+    else:
+        filename = MODEL_CATALOG[choice]
+        model_path = model_dir / filename
+        download_needed = not model_path.exists()
+
+    # Download if needed (only for catalog models)
+    if download_needed:
+        url = BASE_URL + model_path.name
+        with st.spinner(f"Downloading model: {model_path.name} …"):
+            try:
+                urllib.request.urlretrieve(url, model_path)
+                st.success(f"Downloaded to {model_path}")
+            except Exception as e:
+                st.error(f"Failed to download {model_path.name}: {e}")
+                st.stop()
+
+    # Run CellTypist
+    if st.button("Run CellTypist", key="celltypist_run"):
         try:
             import celltypist
-            from celltypist import models
-            mdl = model_path if model_path else models.download_models(model="Immune_All_Low")
-            res = celltypist.annotate(adata, model=mdl)
-            adata.obs["celltypist_labels"] = res.predicted_labels
-            st.success("Annotation complete. Added `celltypist_labels` to adata.obs.")
+
+            adata = st.session_state.adata.copy()
+            with st.spinner(f"Annotating cells with {model_path.name}…"):
+                pred = celltypist.annotate(adata, model=str(model_path))
+                adata.obs["celltypist_label"] = pred.predicted_labels
+
+            st.session_state.adata = adata
+            st.success("✅ CellTypist annotation complete.")
+
+            # Summary table
+            st.dataframe(
+                adata.obs["celltypist_label"].value_counts()
+                .rename_axis("Cell Type")
+                .reset_index(name="n"),
+                width="stretch",
+            )
+
+            # UMAP colored by predicted type (if available)
+            if "X_umap" in adata.obsm:
+                fig = _umap_scatter(adata, color_key="celltypist_label")
+                if fig is not None:
+                    st.plotly_chart(
+                        fig,
+                        width="stretch",
+                        config={"displaylogo": False, "responsive": True},
+                    )
+            else:
+                st.info("No UMAP found. Compute embedding first to visualize labels.")
+
+        except ModuleNotFoundError:
+            st.error(
+                "No module named `celltypist`. "
+                "Add `celltypist>=1.6.0` to requirements.txt and redeploy."
+            )
         except Exception as e:
             st.error(f"CellTypist failed: {e}")
-    if st.button("Save and continue"):
-        st.session_state.adata = adata
-    # Show UMAP colored by labels if available
-    key = "celltypist_labels" if "celltypist_labels" in adata.obs else None
-    if key:
-        fig = _umap_scatter(adata, key)
-        if fig is not None:
-            st.plotly_chart(fig, width='stretch')
+
+    if st.button("Save and continue", key="celltypist_save"):
+        st.success("Saved CellTypist annotations to session.")
 
 # ---------------------------
 # Step 8: (Optional) Trajectory

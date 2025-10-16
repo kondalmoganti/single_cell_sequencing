@@ -477,7 +477,9 @@ if step == "Normalize & HVGs":
             sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
             st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())
         except ImportError as e:
-            st.warning(f"{e}
+          st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
+          sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
+
 Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
             st.write(adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts())

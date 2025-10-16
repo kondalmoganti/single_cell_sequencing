@@ -546,63 +546,77 @@ if step == "Normalize & HVGs":
     import scanpy as sc
     import pandas as pd
     import numpy as np
+
     adata = st.session_state.adata.copy()
 
+    # ---------- Normalization ----------
     st.subheader("Normalization")
+
     method = st.selectbox(
         "Method",
-        ["pp.normalize_total + log1p", "SCVI (variance-stabilizing)"]  # <— NEW
+        ["pp.normalize_total + log1p", "SCVI (variance-stabilizing)"],
+        key="norm_method",
     )
 
     if method == "pp.normalize_total + log1p":
-        target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
-        if st.button("Run normalization"):
+        target_sum = st.number_input(
+            "Target sum per cell",
+            value=1e4, step=1e3, format="%.0f", key="norm_target_sum"
+        )
+        if st.button("Run normalization", key="norm_run"):
             sc.pp.normalize_total(adata, target_sum=float(target_sum))
             sc.pp.log1p(adata)
             st.success("✅ Normalized and log1p-transformed.")
     else:
-        # SCVI path
+        # SCVI path (Python 3.11 recommended; requires scvi-tools/torch)
         try:
             import scvi
 
-            # Ensure counts layer is present for model setup
+            # Ensure counts layer exists
             if "counts" not in adata.layers:
-                # If X is log-normalized already, try to recover counts if available in .raw
                 if adata.raw is not None and adata.raw.X is not None:
                     adata.layers["counts"] = adata.raw.X.copy()
                 else:
-                    # Fall back: assume X holds counts (typical right after load)
                     adata.layers["counts"] = adata.X.copy()
 
             scvi.settings.seed = 0
             scvi.model.SCVI.setup_anndata(adata, layer="counts")
-            n_latent = st.number_input("Latent dim (SCVI)", min_value=8, max_value=64, value=30, step=2)
-            max_epochs = st.number_input("Max epochs", min_value=50, max_value=500, value=200, step=50)
 
-            if st.button("Train SCVI"):
+            n_latent = st.number_input(
+                "Latent dim (SCVI)", min_value=8, max_value=64, value=30, step=2,
+                key="scvi_n_latent"
+            )
+            max_epochs = st.number_input(
+                "Max epochs", min_value=50, max_value=500, value=200, step=50,
+                key="scvi_epochs"
+            )
+
+            if st.button("Train SCVI", key="scvi_train"):
                 with st.spinner("Training SCVI (CPU)…"):
                     model = scvi.model.SCVI(adata, n_latent=int(n_latent))
-                    model.train(max_epochs=int(max_epochs), early_stopping=True, plan_kwargs={"weight_decay": 0.0})
+                    model.train(max_epochs=int(max_epochs), early_stopping=True,
+                                plan_kwargs={"weight_decay": 0.0})
                 # Store outputs
                 adata.obsm["X_scvi"] = model.get_latent_representation()
-                # “Normalized” expression on a comparable library size (10k) for downstream HVG/DE if wanted
+
                 norm = model.get_normalized_expression(library_size=1e4)
-                # Save as a dense/sparse layer depending on size
                 try:
-                    import pandas as pd
                     adata.layers["scvi_normalized"] = np.asarray(norm.values, dtype=np.float32)
                 except Exception:
                     adata.layers["scvi_normalized"] = np.asarray(norm, dtype=np.float32)
 
-                st.success("✅ SCVI trained. Latent embedding stored in `obsm['X_scvi']`; normalized counts in `layers['scvi_normalized']`.")
+                st.success("✅ SCVI trained. Latent → `obsm['X_scvi']`, normalized → `layers['scvi_normalized']`.")
         except Exception as e:
             st.error(f"SCVI failed to run: {e}")
-            st.info("Tip: ensure Python 3.11 (runtime.txt) and that scvi-tools/torch installed.")
+            st.info("Tip: pin Python 3.11 in runtime.txt and add `scvi-tools` to requirements.")
 
+    # ---------- Highly Variable Genes ----------
     st.subheader("Highly Variable Genes")
+
     flavor_choice = st.selectbox(
         "HVG flavor",
-        ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
+        ["cell_ranger", "seurat", "seurat_v3 (needs numba)"],
+        key="hvg_flavor_choice",
     )
     flavor_map = {
         "cell_ranger": "cell_ranger",
@@ -610,27 +624,57 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
-    n_top = st.number_input("n_top_genes", value=2000, step=500)
 
-    if st.button("Find HVGs"):
+    n_top = st.number_input("n_top_genes", value=2000, step=500, key="hvg_n_top")
+
+    if st.button("Find HVGs", key="find_hvg"):
         try:
-            # Prefer SCVI-normalized layer if available
+            # Prefer SCVI-normalized values if present, otherwise work on .X
             if "scvi_normalized" in adata.layers:
-                X_bak = adata.X
+                X_backup = adata.X
                 adata.X = adata.layers["scvi_normalized"]
                 sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
-                adata.X = X_bak
+                adata.X = X_backup
             else:
                 sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
 
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            hvgs = adata.var[adata.var["highly_variable"]].copy()
+            st.success(f"Found {hvgs.shape[0]} highly variable genes.")
+
+            # Show a compact preview (top 20) with whichever columns are present
+            preview_cols = [c for c in ["means", "dispersions", "dispersions_norm", "variance", "variance_norm"]
+                            if c in hvgs.columns]
+            show_cols = preview_cols[:2] if preview_cols else []
+            to_show = hvgs.head(20)[show_cols] if show_cols else hvgs.head(20)
+            # insert gene names as a column for readability
+            to_show = to_show.copy()
+            to_show.insert(0, "gene", hvgs.head(20).index)
+            st.dataframe(to_show, width="stretch")
+
+            # Download full HVG gene list
+            csv_bytes = hvgs.index.to_series().to_csv(index=False).encode()
+            st.download_button(
+                "Download HVG gene list (CSV)",
+                csv_bytes,
+                file_name="highly_variable_genes.csv",
+                mime="text/csv",
+                key="hvg_download",
             )
         except ImportError as e:
             st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-            st.write(
-                adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
+            hvgs = adata.var[adata.var["highly_variable"]].copy()
+            st.success(f"Found {hvgs.shape[0]} highly variable genes.")
+            to_show = hvgs.head(20).copy()
+            to_show.insert(0, "gene", hvgs.head(20).index)
+            st.dataframe(to_show, width="stretch")
+            csv_bytes = hvgs.index.to_series().to_csv(index=False).encode()
+            st.download_button(
+                "Download HVG gene list (CSV)",
+                csv_bytes,
+                file_name="highly_variable_genes.csv",
+                mime="text/csv",
+                key="hvg_download_fallback",
             )
         except Exception as e:
             st.error(f"HVG computation failed: {e}")

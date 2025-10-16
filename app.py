@@ -688,30 +688,52 @@ if step == "Normalize & HVGs":
         st.success("Saved updates to session.")
 
 # ---------------------------
-# Step 4: Dimensionality Reduction
+# Step 4: Embedding & Clustering
 # ---------------------------
-if step == "Dimensionality Reduction":
+if step == "Embedding & Clustering":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
-    import pandas as pd  # needed for dtype checks
+    import pandas as pd
+    import numpy as np
+    from sklearn.cluster import KMeans
 
     adata = st.session_state.adata.copy()
-    st.subheader("PCA / Neighbors / UMAP")
+    st.subheader("Embedding (PCA/UMAP) + Clustering")
 
-    # Controls (unique keys)
-    use_hvg = st.checkbox("Use only HVGs", value=True, key="dr_use_hvg")
-    n_pcs = st.slider("Number of PCs", 10, 100, 50, key="dr_n_pcs")
-    neighbors_k = st.slider("Neighbors k", 5, 50, 15, key="dr_neighbors_k")
+    # -------- Embedding controls --------
+    use_hvg = st.checkbox("Use only HVGs", value=True, key="ec_use_hvg")
+    n_pcs = st.slider("Number of PCs", 10, 100, 50, key="ec_n_pcs")
+    neighbors_k = st.slider("Neighbors k", 5, 50, 15, key="ec_neighbors_k")
+    use_scvi = "X_scvi" in adata.obsm
+    if use_scvi:
+        st.info("SCVI latent found. If you run embedding, UMAP will be built on SCVI latent.")
 
-    # Run DR once
-    if st.button("Run DR", key="dr_run"):
-        if "X_scvi" in adata.obsm:
-            st.info("Using SCVI latent representation for neighbors/UMAP.")
+    # -------- Clustering controls --------
+    algo = st.selectbox(
+        "Clustering algorithm",
+        ["leiden (needs igraph)", "louvain (needs igraph)", "KMeans (no extra deps)"],
+        index=2,
+        key="ec_algo",
+    )
+    resolution = st.slider(
+        "Resolution (graph methods; Leiden/Louvain only)", 0.1, 2.0, 0.5, 0.1, key="ec_resolution"
+    )
+    k_kmeans = st.slider("K (for KMeans)", 2, 50, 10, key="ec_k_kmeans")
+
+    # -------- Action buttons --------
+    colA, colB = st.columns(2)
+    run_embed = colA.button("Run Embedding (PCA/UMAP)", key="ec_run_embed")
+    run_cluster = colB.button("Run Clustering", key="ec_run_cluster")
+
+    # -------- Run embedding --------
+    if run_embed:
+        if use_scvi:
+            st.info("Using SCVI latent for neighbors/UMAP.")
             sc.pp.neighbors(adata, use_rep="X_scvi", n_neighbors=int(neighbors_k))
             sc.tl.umap(adata)
         else:
-            # Work on a temporary slice if HVGs are requested
+            # Work on a temporary object if HVGs requested, then copy results back
             adata_use = adata
             if use_hvg and "highly_variable" in adata.var.columns:
                 adata_use = adata[:, adata.var["highly_variable"]].copy()
@@ -732,69 +754,8 @@ if step == "Dimensionality Reduction":
         st.session_state.adata = adata
         st.success("Computed neighbors and UMAP.")
 
-    # --- Choose coloring and plot ---
-    candidate_cols = []
-    for c in adata.obs.columns:
-        s = adata.obs[c]
-        if pd.api.types.is_categorical_dtype(s) or s.dtype == object:
-            if s.nunique() <= 50:
-                candidate_cols.append(c)
-    # Prefer cluster columns first
-    for preferred in ["leiden", "louvain", "kmeans"]:
-        if preferred in candidate_cols:
-            candidate_cols.remove(preferred)
-            candidate_cols.insert(0, preferred)
-
-    color_by = st.selectbox(
-        "Color UMAP by",
-        options=["(none)"] + candidate_cols,
-        key="dr_color_by",
-    )
-    color_key = None if color_by == "(none)" else color_by
-
-    if "X_umap" in adata.obsm:
-        fig = _umap_scatter(adata, color_key=color_key)
-        if fig is not None:
-            st.plotly_chart(
-                fig,
-                width="stretch",
-                config={"displaylogo": False, "responsive": True},
-            )
-    else:
-        st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
-
-    if st.button("Save and continue", key="dr_save"):
-        st.session_state.adata = adata
-        st.success("Saved updates to session.")
-
-
-# ---------------------------
-# Step 5: Clustering
-# ---------------------------
-if step == "Clustering":
-    if st.session_state.adata is None:
-        st.stop()
-    import scanpy as sc
-    import pandas as pd
-    from sklearn.cluster import KMeans
-
-    adata = st.session_state.adata.copy()
-    st.subheader("Clustering")
-
-    algo = st.selectbox(
-        "Algorithm",
-        ["leiden (needs igraph)", "louvain (needs igraph)", "KMeans (no extra deps)"],
-        index=0,
-        key="cluster_algo",
-    )
-
-    # Controls with unique keys
-    resolution = st.slider(
-        "Resolution (graph methods)", 0.1, 2.0, 0.5, 0.1, key="cluster_resolution"
-    )
-    k_kmeans = st.slider("K (for KMeans)", 2, 50, 10, key="cluster_k_kmeans")
-
-    if st.button("Run clustering", key="cluster_run"):
+    # -------- Run clustering --------
+    if run_cluster:
         try:
             if algo.startswith("leiden"):
                 sc.tl.leiden(adata, resolution=float(resolution))
@@ -803,7 +764,7 @@ if step == "Clustering":
                 sc.tl.louvain(adata, resolution=float(resolution))
                 st.success("Louvain clustering done.")
             else:
-                # KMeans on PCA (compute minimal PCA if needed)
+                # KMeans uses PCA; compute quickly if missing
                 if "X_pca" not in adata.obsm:
                     st.info("PCA not found; computing PCA (50 comps) quickly for KMeans…")
                     sc.pp.scale(adata, max_value=10)
@@ -813,7 +774,7 @@ if step == "Clustering":
                 adata.obs["kmeans"] = pd.Categorical(labels.astype(str))
                 st.success("KMeans clustering done.")
         except ImportError as e:
-            # Fall back to KMeans if igraph/leidenalg/louvain missing
+            # igraph/leidenalg/louvain missing → fallback to KMeans
             st.warning(f"{e}. Falling back to KMeans (no igraph needed).")
             if "X_pca" not in adata.obsm:
                 sc.pp.scale(adata, max_value=10)
@@ -827,37 +788,42 @@ if step == "Clustering":
         else:
             st.session_state.adata = adata
 
-    # ---- Visualize clusters only ----
-    cluster_key = None
-    for c in ["leiden", "louvain", "kmeans"]:
-        if c in adata.obs.columns:
-            cluster_key = c
-            break
+    # -------- Plotting --------
+    # Build a color list (clusters first)
+    cluster_keys = [c for c in ["leiden", "louvain", "kmeans"] if c in adata.obs.columns]
+    candidate_cols = cluster_keys.copy()
+    # then small-cardinality categorical columns
+    for c in adata.obs.columns:
+        if c in candidate_cols:
+            continue
+        s = adata.obs[c]
+        if pd.api.types.is_categorical_dtype(s) or s.dtype == object:
+            if s.nunique() <= 50:
+                candidate_cols.append(c)
 
-    if cluster_key is not None:
-        # Let the user choose among available cluster annotations
-        cluster_opts = [c for c in ["leiden", "louvain", "kmeans"] if c in adata.obs.columns]
-        cluster_key = st.selectbox("Color UMAP by cluster", cluster_opts, key="cluster_color_key")
+    color_by = st.selectbox(
+        "Color UMAP by",
+        options=["(none)"] + candidate_cols,
+        index=1 if candidate_cols else 0,  # default to first cluster key if available
+        key="ec_color_by",
+    )
+    color_key = None if color_by == "(none)" else color_by
 
-        if "X_umap" in adata.obsm:
-            fig = _umap_scatter(adata, color_key=cluster_key)
-            if fig is not None:
-                st.plotly_chart(
-                    fig,
-                    width="stretch",
-                    config={"displaylogo": False, "responsive": True},
-                )
-
-        st.dataframe(
-            adata.obs[cluster_key].value_counts().rename_axis("cluster").reset_index(name="n"),
-            width="stretch",
-        )
+    if "X_umap" in adata.obsm:
+        fig = _umap_scatter(adata, color_key=color_key)
+        if fig is not None:
+            st.plotly_chart(
+                fig,
+                width="stretch",
+                config={"displaylogo": False, "responsive": True},
+            )
+        if color_key in cluster_keys:
+            st.dataframe(
+                adata.obs[color_key].value_counts().rename_axis("cluster").reset_index(name="n"),
+                width="stretch",
+            )
     else:
-        st.info("No cluster labels found yet. Run clustering above and then visualize here.")
-
-    if st.button("Save and continue", key="cluster_save"):
-        st.session_state.adata = adata
-        st.success("Saved updates to session.")
+        st.warning("UMAP not computed yet. Click “Run Embedding (PCA/UMAP)”.")
 
 # ---------------------------
 

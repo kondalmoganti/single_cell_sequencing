@@ -826,30 +826,115 @@ if step == "Embedding & Clustering":
         st.warning("UMAP not computed yet. Click “Run Embedding (PCA/UMAP)”.")
 
 # ---------------------------
-
-# Step 6: Markers & DE
+# Step 6: Differential Expression
 # ---------------------------
-if step == "Markers & DE":
+if step == "Differential Expression":
     if st.session_state.adata is None:
         st.stop()
     import scanpy as sc
-    adata = st.session_state.adata.copy()
+    import pandas as pd
+    import numpy as np
 
-    st.subheader("Rank genes per cluster")
-    groupby = st.selectbox("Group by", [c for c in adata.obs.columns if adata.obs[c].dtype.name in ["category","object","int","int64"]], index=max(0, [*adata.obs.columns].index("leiden") if "leiden" in adata.obs.columns else 0))
-    method = st.selectbox("Method", ["wilcoxon", "t-test", "logreg"], index=0)
-    top_n = st.slider("Top N per group", 5, 100, 25)
-    if st.button("Run DE"):
-        sc.tl.rank_genes_groups(adata, groupby=groupby, method=method)
-        df = _rank_genes_df(adata, groupby)
-        if not df.empty:
-            # Show top_n per group
-            df_top = df.sort_values(["group", "pval_adj", "score"], ascending=[True, True, False]).groupby("group").head(int(top_n))
-            st.dataframe(df_top, width='stretch')
-        else:
-            st.info("No DE results found.")
-    if st.button("Save and continue"):
-        st.session_state.adata = adata
+    adata = st.session_state.adata.copy()
+    st.subheader("Differential Expression (rank_genes_groups)")
+
+    # --- Choose a valid groupby column (2..50 groups; categorical or convertible) ---
+    candidate_groupbys = []
+    for c in adata.obs.columns:
+        s = adata.obs[c]
+        # prefer categorical; else accept object/int with limited unique values
+        if pd.api.types.is_categorical_dtype(s):
+            if 2 <= len(s.cat.categories) <= 50:
+                candidate_groupbys.append(c)
+        elif s.dtype == object or pd.api.types.is_integer_dtype(s):
+            nunq = s.nunique(dropna=True)
+            if 2 <= nunq <= 50:
+                candidate_groupbys.append(c)
+
+    # surface common cluster keys first
+    for k in ["leiden", "louvain", "kmeans"]:
+        if k in candidate_groupbys:
+            candidate_groupbys.remove(k)
+            candidate_groupbys.insert(0, k)
+
+    if not candidate_groupbys:
+        st.warning("No suitable group columns found in .obs (need 2–50 groups). "
+                   "Run clustering or create a categorical column first.")
+        st.stop()
+
+    groupby = st.selectbox("Group by", candidate_groupbys, key="de_groupby")
+
+    # Ensure categorical dtype for Scanpy
+    if not pd.api.types.is_categorical_dtype(adata.obs[groupby]):
+        adata.obs[groupby] = adata.obs[groupby].astype("category")
+
+    # Reference group: "rest" or a specific category
+    cats = list(adata.obs[groupby].cat.categories)
+    ref_choice = st.selectbox("Reference group", ["rest"] + cats, key="de_reference")
+    reference = "rest" if ref_choice == "rest" else ref_choice
+
+    # Method
+    method = st.selectbox(
+        "Test method",
+        ["wilcoxon", "t-test", "t-test_overestim_var", "logreg"],
+        index=0,
+        key="de_method",
+    )
+
+    # Expression layer: use SCVI-normalized if available
+    layer_opts = ["X"]
+    if "scvi_normalized" in adata.layers:
+        layer_opts.append("scvi_normalized")
+    layer_choice = st.selectbox("Expression layer", layer_opts, key="de_layer")
+    layer = None if layer_choice == "X" else layer_choice
+
+    # Optional: restrict to HVGs for speed (affects the test set of genes)
+    use_hvg = st.checkbox("Limit to HVGs (if present)", value=True, key="de_use_hvg")
+    gene_mask = None
+    if use_hvg and "highly_variable" in adata.var.columns:
+        gene_mask = adata.var["highly_variable"].values
+
+    # Run DE
+    if st.button("Run differential expression", key="de_run"):
+        try:
+            if gene_mask is not None:
+                adata_use = adata[:, gene_mask].copy()
+            else:
+                adata_use = adata
+
+            sc.tl.rank_genes_groups(
+                adata_use,
+                groupby=groupby,
+                method=method,
+                layer=layer,
+                reference=reference,
+            )
+
+            # Collect a tidy dataframe for preview & download
+            df = sc.get.rank_genes_groups_df(adata_use, group=None)
+            st.success("Computed DE with rank_genes_groups.")
+            st.dataframe(df.head(50), width="stretch")
+
+            # Download full results
+            csv_bytes = df.to_csv(index=False).encode()
+            st.download_button(
+                "Download full DE results (CSV)",
+                csv_bytes,
+                file_name=f"rank_genes_groups_{groupby}_{method}.csv",
+                mime="text/csv",
+                key="de_download",
+            )
+
+            # Persist results back to session object (on full adata)
+            # Copy RGG results from adata_use.uns into adata.uns
+            adata.uns["rank_genes_groups"] = adata_use.uns["rank_genes_groups"]
+            if "rank_genes_groups_params" in adata_use.uns:
+                adata.uns["rank_genes_groups_params"] = adata_use.uns["rank_genes_groups_params"]
+            st.session_state.adata = adata
+
+        except Exception as e:
+            st.error(f"DE failed: {e}")
+            st.info("Tips: ensure the groupby column is categorical with ≥2 groups and no all-NaN.")
 
 # ---------------------------
 # Step 7: Cell Type Annotation

@@ -961,10 +961,14 @@ if step == "Cell Type Annotation (optional)":
     model_dir.mkdir(parents=True, exist_ok=True)
 
 	    # ---------- Robust model fetcher ----------
-    def ensure_celltypist_model(model_filename: str) -> Path:
+        # ---------- Robust model fetcher (FINAL) ----------
+    def ensure_celltypist_model(model_filename: str) -> Path | None:
         """
-        Get a CellTypist .pkl model; prefer CellTypist's downloader, then try direct URLs.
-        Returns the local Path to the model.
+        Try to make sure `data/models/<model_filename>` exists.
+        Order:
+          1) CellTypist's official downloader (try both API signatures)
+          2) Two static mirrors (may fail if DNS/egress blocked)
+          3) Return None (caller can ask for manual upload)
         """
         target = model_dir / model_filename
         if target.exists():
@@ -973,27 +977,37 @@ if step == "Cell Type Annotation (optional)":
         # 1) Preferred: CellTypist's downloader (handles mirrors/cache)
         try:
             import celltypist
-            from celltypist.models import download_models, models_path
+            from pathlib import Path as _Path
+            # Some versions expose these in different places; try both.
+            try:
+                from celltypist.models import download_models, models_path
+            except ImportError:
+                from celltypist import models as _models
+                download_models = _models.download_models
+                models_path = _models.models_path
 
             with st.spinner(f"Downloading {model_filename} via CellTypist…"):
                 stem = model_filename.replace(".pkl", "")
-                download_models(models=[stem])  # downloads to CellTypist cache
-                ct_dir = Path(models_path())
+                # Try both call signatures to be version-agnostic
+                try:
+                    download_models(model=stem)          # older/newer signature
+                except TypeError:
+                    download_models(models=[stem])       # alternative signature
+
+                ct_dir = _Path(models_path())
                 src = ct_dir / f"{stem}.pkl"
                 if src.exists():
-                    target.write_bytes(src.read_bytes())  # copy into our app folder
+                    target.write_bytes(src.read_bytes())
                     st.success(f"✅ Downloaded to {target}")
                     return target
                 else:
-                    raise FileNotFoundError(f"Downloaded model not found at {src}")
-
+                    st.warning(f"CellTypist reported success but {src} not found.")
         except (ModuleNotFoundError, ImportError):
             st.error("No module named `celltypist`. Add `celltypist>=1.6.0` to requirements and redeploy.")
-            raise
         except Exception as e:
-            st.warning(f"CellTypist downloader failed: {e}. Trying direct URLs…")
+            st.warning(f"CellTypist downloader failed: {e}")
 
-        # 2) Fallback: try known static hosts
+        # 2) Fallback: static URLs (will fail if DNS/egress blocked)
         import urllib.request
         for base in [
             "https://celltypist.cellgeni.sanger.ac.uk/models/",
@@ -1008,21 +1022,15 @@ if step == "Cell Type Annotation (optional)":
             except Exception as e:
                 st.info(f"Fallback URL failed: {e}")
 
-        # 3) Final fallback
-        st.error(
-            f"Could not download {model_filename}. "
-            "Upload the .pkl to data/models/ or commit it to your repo."
-        )
-        raise FileNotFoundError(model_filename)
+        # 3) Give up (let caller prompt for manual upload)
+        return None
+
 
     # -------------------------------------------------
     # Organism selection
     # -------------------------------------------------
     organism = st.selectbox("Organism", ["Human", "Mouse"], key="ct_organism")
 
-    # -------------------------------------------------
-    # Model catalog (filtered by organism)
-    # -------------------------------------------------
     MODEL_CATALOG = {
         "Human": {
             "Immune (low-res)": "Immune_All_Low.pkl",
@@ -1037,16 +1045,17 @@ if step == "Cell Type Annotation (optional)":
             "Brain (low-res)": "Mouse_Brain_Low.pkl",
         },
     }
-
     organism_models = MODEL_CATALOG[organism]
 
     model_choice = st.selectbox(
         f"Choose {organism} model",
-        list(organism_models.keys()) + ["Custom (.pkl path)"],
+        list(organism_models.keys()) + ["Custom (.pkl path)", "Upload .pkl now"],
         key="ct_model_choice",
     )
 
-    # Handle model path logic
+    uploaded_pkl = None
+    model_path = None
+
     if model_choice == "Custom (.pkl path)":
         custom_path = st.text_input(
             "Enter full path to your .pkl model file",
@@ -1054,53 +1063,59 @@ if step == "Cell Type Annotation (optional)":
             key="ct_custom_path",
         )
         model_path = Path(custom_path)
+
+    elif model_choice == "Upload .pkl now":
+        uploaded_pkl = st.file_uploader("Upload CellTypist model (.pkl)", type=["pkl"], key="ct_upload")
+        if uploaded_pkl is not None:
+            target = model_dir / uploaded_pkl.name
+            target.write_bytes(uploaded_pkl.read())
+            st.success(f"✅ Saved uploaded model to {target}")
+            model_path = target
+
     else:
         model_filename = organism_models[model_choice]
-        # Use robust downloader + cache
-        model_path = ensure_celltypist_model(model_filename)
+        candidate = ensure_celltypist_model(model_filename)
+        if candidate is None:
+            st.error(
+                "Couldn't download the model (network/DNS blocked). "
+                "Please switch to **Upload .pkl now** above and provide the model file, "
+                "or commit it under `data/models/` in your repo."
+            )
+        else:
+            model_path = candidate
 
     # -------------------------------------------------
     # Run CellTypist
     # -------------------------------------------------
+    can_run = model_path is not None and Path(model_path).exists()
     if st.button("Run CellTypist", key="celltypist_run"):
-        try:
-            import celltypist
-
-            adata = st.session_state.adata.copy()
-            with st.spinner(f"Annotating cells using {model_path.name}…"):
-                predictions = celltypist.annotate(adata, model=str(model_path))
-                adata.obs["celltypist_label"] = predictions.predicted_labels
-
-            st.session_state.adata = adata
-            st.success(f"✅ CellTypist annotation complete using {model_choice}")
-
-            # Display summary
-            st.dataframe(
-                adata.obs["celltypist_label"].value_counts()
-                .rename_axis("Cell Type")
-                .reset_index(name="n"),
-                width="stretch",
-            )
-
-            # UMAP visualization if available
-            if "X_umap" in adata.obsm:
-                fig = _umap_scatter(adata, color_key="celltypist_label")
-                if fig is not None:
-                    st.plotly_chart(
-                        fig,
-                        width="stretch",
-                        config={"displaylogo": False, "responsive": True},
-                    )
-            else:
-                st.info("UMAP not found. Compute embedding before visualization.")
-
-        except ModuleNotFoundError:
-            st.error(
-                "❌ No module named `celltypist`. "
-                "Please add `celltypist>=1.6.0` to your requirements.txt and redeploy."
-            )
-        except Exception as e:
-            st.error(f"CellTypist failed: {e}")
+        if not can_run:
+            st.error("No model file available. Please upload or provide a valid `.pkl` path.")
+        else:
+            try:
+                import celltypist
+                adata = st.session_state.adata.copy()
+                with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
+                    pred = celltypist.annotate(adata, model=str(model_path))
+                    adata.obs["celltypist_label"] = pred.predicted_labels
+                st.session_state.adata = adata
+                st.success("✅ CellTypist annotation complete.")
+                st.dataframe(
+                    adata.obs["celltypist_label"].value_counts()
+                    .rename_axis("Cell Type").reset_index(name="n"),
+                    width="stretch",
+                )
+                if "X_umap" in adata.obsm:
+                    fig = _umap_scatter(adata, color_key="celltypist_label")
+                    if fig is not None:
+                        st.plotly_chart(fig, width="stretch",
+                                        config={"displaylogo": False, "responsive": True})
+                else:
+                    st.info("No UMAP found. Compute embedding first to visualize labels.")
+            except ModuleNotFoundError:
+                st.error("`celltypist` is missing. Add `celltypist>=1.6.0` to requirements.txt and redeploy.")
+            except Exception as e:
+                st.error(f"CellTypist failed: {e}")
 
     st.divider()
 

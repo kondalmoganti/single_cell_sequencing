@@ -686,9 +686,9 @@ if step == "Dimensionality Reduction":
 
     # Plot if available
     if "X_umap" in adata.obsm:
-        fig = _umap_scatter(adata)
+        fig = _umap_scatter(adata, color_key)
         if fig is not None:
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width="stretch", config={ "displaylogo": False, "responsive": True,},)
     else:
         st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
 

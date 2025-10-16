@@ -39,7 +39,7 @@ import streamlit as st
 # Lazy imports for heavy deps
 import numpy as np
 import pandas as pd
-
+import plotly.express as px
 # Optional heavy libs are imported when used
 
 st.set_page_config(page_title="scRNA-seq Streamlit MVP", layout="wide")
@@ -143,18 +143,20 @@ def ensure_plotly_registered():
     pio.templates.default = "plotly"
 
 
-def _umap_scatter(adata, key: str = "leiden"):
-    import plotly.express as px
-    ensure_plotly_registered()
+def _umap_scatter(adata, color_key=None):
     if "X_umap" not in adata.obsm:
-        st.warning("UMAP not computed yet. Run Dimensionality Reduction.")
         return None
-    df = pd.DataFrame(adata.obsm["X_umap"], columns=["UMAP1", "UMAP2"]).copy()
-    if key in adata.obs.columns:
-        df[key] = adata.obs[key].astype(str).values
-    else:
-        df[key] = "NA"
-    fig = px.scatter(df, x="UMAP1", y="UMAP2", color=key, hover_data=[df.index])
+    emb = adata.obsm["X_umap"]
+    df = pd.DataFrame({"UMAP1": emb[:, 0], "UMAP2": emb[:, 1]})
+    if color_key and color_key in adata.obs:
+        df["color"] = adata.obs[color_key].astype(str)
+    fig = px.scatter(
+        df,
+        x="UMAP1", y="UMAP2",
+        color="color" if "color" in df else None,
+        hover_data=None,
+    )
+    fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
     return fig
 
 

@@ -633,7 +633,7 @@ if step == "Normalize & HVGs":
         except Exception as e:
             st.error(f"HVG computation failed: {e}")
 
-    if st.button("Save and continue"):
+    if st.button("Save and continue", key="normalize_save"):
         st.session_state.adata = adata
         st.success("Saved updates to session.")
 
@@ -670,8 +670,9 @@ if step == "Dimensionality Reduction":
             sc.tl.umap(adata)
 
         st.success("Computed neighbors and UMAP.")
-    if st.button("Save and continue"):
+    if st.button("Save and continue", key="dr_save"):
         st.session_state.adata = adata
+        st.success("Saved updates to session.")
     fig = _umap_scatter(adata)
     if fig is not None:
         st.plotly_chart(fig, width='stretch')

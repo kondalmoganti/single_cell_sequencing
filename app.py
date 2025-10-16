@@ -647,9 +647,10 @@ if step == "Dimensionality Reduction":
     adata = st.session_state.adata.copy()
 
     st.subheader("PCA / Neighbors / UMAP")
-    use_hvg = st.checkbox("Use only HVGs", value=True)
-    n_pcs = st.slider("Number of PCs", 10, 100, 50)
-    neighbors_k = st.slider("Neighbors k", 5, 50, 15)
+    use_hvg = st.checkbox("Use only HVGs", value=True, key="dr_use_hvg")
+    n_pcs = st.slider("Number of PCs", 10, 100, 50, key="dr_n_pcs")
+    neighbors_k = st.slider("Neighbors k", 5, 50, 15, key="dr_neighbors_k")
+    run_dr = st.button("Run DR", key="dr_run")
     if st.button("Run DR"):
         use_hvg = st.checkbox("Use only HVGs", value=True)
         n_pcs = st.slider("Number of PCs", 10, 100, 50)

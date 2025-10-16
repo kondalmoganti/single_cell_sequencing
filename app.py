@@ -446,21 +446,61 @@ if step == "Normalize & HVGs":
         st.stop()
     import scanpy as sc
     import pandas as pd
+    import numpy as np
     adata = st.session_state.adata.copy()
 
     st.subheader("Normalization")
-    method = st.selectbox("Method", ["pp.normalize_total + log1p", "SCTransform (placeholder)"])
-    if method.startswith("pp.normalize_total"):
+    method = st.selectbox(
+        "Method",
+        ["pp.normalize_total + log1p", "SCVI (variance-stabilizing)"]  # <— NEW
+    )
+
+    if method == "pp.normalize_total + log1p":
         target_sum = st.number_input("Target sum per cell", value=1e4, step=1e3, format="%.0f")
         if st.button("Run normalization"):
             sc.pp.normalize_total(adata, target_sum=float(target_sum))
             sc.pp.log1p(adata)
             st.success("✅ Normalized and log1p-transformed.")
     else:
-        st.info("SCTransform not included here. Use scvi-tools or R interop if needed.")
+        # SCVI path
+        try:
+            import scvi
+
+            # Ensure counts layer is present for model setup
+            if "counts" not in adata.layers:
+                # If X is log-normalized already, try to recover counts if available in .raw
+                if adata.raw is not None and adata.raw.X is not None:
+                    adata.layers["counts"] = adata.raw.X.copy()
+                else:
+                    # Fall back: assume X holds counts (typical right after load)
+                    adata.layers["counts"] = adata.X.copy()
+
+            scvi.settings.seed = 0
+            scvi.model.SCVI.setup_anndata(adata, layer="counts")
+            n_latent = st.number_input("Latent dim (SCVI)", min_value=8, max_value=64, value=30, step=2)
+            max_epochs = st.number_input("Max epochs", min_value=50, max_value=500, value=200, step=50)
+
+            if st.button("Train SCVI"):
+                with st.spinner("Training SCVI (CPU)…"):
+                    model = scvi.model.SCVI(adata, n_latent=int(n_latent))
+                    model.train(max_epochs=int(max_epochs), early_stopping=True, plan_kwargs={"weight_decay": 0.0})
+                # Store outputs
+                adata.obsm["X_scvi"] = model.get_latent_representation()
+                # “Normalized” expression on a comparable library size (10k) for downstream HVG/DE if wanted
+                norm = model.get_normalized_expression(library_size=1e4)
+                # Save as a dense/sparse layer depending on size
+                try:
+                    import pandas as pd
+                    adata.layers["scvi_normalized"] = np.asarray(norm.values, dtype=np.float32)
+                except Exception:
+                    adata.layers["scvi_normalized"] = np.asarray(norm, dtype=np.float32)
+
+                st.success("✅ SCVI trained. Latent embedding stored in `obsm['X_scvi']`; normalized counts in `layers['scvi_normalized']`.")
+        except Exception as e:
+            st.error(f"SCVI failed to run: {e}")
+            st.info("Tip: ensure Python 3.11 (runtime.txt) and that scvi-tools/torch installed.")
 
     st.subheader("Highly Variable Genes")
-
     flavor_choice = st.selectbox(
         "HVG flavor",
         ["cell_ranger", "seurat", "seurat_v3 (needs numba)"]
@@ -471,17 +511,23 @@ if step == "Normalize & HVGs":
         "seurat_v3 (needs numba)": "seurat_v3",
     }
     flavor = flavor_map[flavor_choice]
-
     n_top = st.number_input("n_top_genes", value=2000, step=500)
 
     if st.button("Find HVGs"):
         try:
-            sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
+            # Prefer SCVI-normalized layer if available
+            if "scvi_normalized" in adata.layers:
+                X_bak = adata.X
+                adata.X = adata.layers["scvi_normalized"]
+                sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
+                adata.X = X_bak
+            else:
+                sc.pp.highly_variable_genes(adata, flavor=flavor, n_top_genes=int(n_top))
+
             st.write(
                 adata.var.get("highly_variable", pd.Series(index=adata.var_names)).value_counts()
             )
         except ImportError as e:
-            # Correctly closed f-string — single quotes inside are escaped
             st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
             sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
             st.write(
@@ -508,13 +554,24 @@ if step == "Dimensionality Reduction":
     n_pcs = st.slider("Number of PCs", 10, 100, 50)
     neighbors_k = st.slider("Neighbors k", 5, 50, 15)
     if st.button("Run DR"):
-        if use_hvg and "highly_variable" in adata.var.columns:
-            adata = adata[:, adata.var["highly_variable"]].copy()
-        sc.pp.scale(adata, max_value=10)
-        sc.tl.pca(adata, n_comps=int(n_pcs))
-        sc.pp.neighbors(adata, n_neighbors=int(neighbors_k), n_pcs=int(n_pcs))
-        sc.tl.umap(adata)
-        st.success("Computed PCA, neighbors, and UMAP.")
+        use_hvg = st.checkbox("Use only HVGs", value=True)
+        n_pcs = st.slider("Number of PCs", 10, 100, 50)
+        neighbors_k = st.slider("Neighbors k", 5, 50, 15)
+
+        # If SCVI latent exists, use it directly for neighbors/UMAP
+        if "X_scvi" in adata.obsm:
+            st.info("Using SCVI latent representation for neighbors/UMAP.")
+            sc.pp.neighbors(adata, use_rep="X_scvi", n_neighbors=int(neighbors_k))
+            sc.tl.umap(adata)
+        else:
+            if use_hvg and "highly_variable" in adata.var.columns:
+                adata = adata[:, adata.var["highly_variable"]].copy()
+            sc.pp.scale(adata, max_value=10)
+            sc.tl.pca(adata, n_comps=int(n_pcs))
+            sc.pp.neighbors(adata, n_neighbors=int(neighbors_k), n_pcs=int(n_pcs))
+            sc.tl.umap(adata)
+
+        st.success("Computed neighbors and UMAP.")
     if st.button("Save and continue"):
         st.session_state.adata = adata
     fig = _umap_scatter(adata)

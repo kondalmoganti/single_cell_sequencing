@@ -1306,34 +1306,42 @@ if step == "Export":
                 st.download_button("Download .h5ad", data=f, file_name=fname, mime="application/octet-stream")
     st.caption("Tip: also export cluster markers as CSV from the DE tab.")
 
+# ---------------------------
+# ℹ️ About this app
+# ---------------------------
 if step == "ℹ️ About this app":
-	with st.expander("ℹ️ About this app", expanded=False):
-    st.markdown(
-        """
-        ### 🧫 Single-Cell RNA-seq Analysis Portal
+    with st.expander("ℹ️ About this app", expanded=True):
+        st.markdown(
+            """
+            ### 🧫 Single-Cell RNA-seq Analysis Portal
 
-        This interactive Streamlit application provides an **end-to-end single-cell RNA-seq pipeline**
-        built on top of the **Scanpy** and **scvi-tools** ecosystems.  
-        It allows users to upload `.h5ad` or `.h5` data matrices and perform essential preprocessing,
-        dimensionality reduction, clustering, and automated cell-type annotation — all without coding.
+            This interactive Streamlit application provides an **end-to-end single-cell RNA-seq pipeline**
+            built on top of the **Scanpy** and **scvi-tools** ecosystems.  
+            It allows users to upload `.h5ad` or `.h5` data matrices and perform essential preprocessing,
+            dimensionality reduction, clustering, and automated cell-type annotation — all without coding.
 
-        **Key features:**
-        - ✅ **Data upload & preview** — load `.h5`, `.h5ad`, or 10X-formatted datasets.
-        - ⚙️ **Quality Control (QC)** — compute per-cell and per-gene metrics.
-        - 📊 **Normalization & HVG detection** — supports Scanpy and SCVI variance stabilization.
-        - 🌀 **Dimensionality reduction** — PCA + UMAP with HVG filtering.
-        - 🔬 **Clustering** — Leiden, Louvain, or KMeans-based clustering.
-        - 🧠 **Cell type annotation** — integrates pretrained **CellTypist** models (Human & Mouse).
-        - 💾 **Session memory** — each step persists so you can continue seamlessly.
-        - 📥 **Export results** — download normalized data or HVG lists.
+            **Key features:**
+            - ✅ **Data upload & preview** — load `.h5`, `.h5ad`, or 10X-formatted datasets.
+            - ⚙️ **Quality Control (QC)** — compute per-cell and per-gene metrics.
+            - 📊 **Normalization & HVG detection** — supports Scanpy and SCVI variance stabilization.
+            - 🌀 **Dimensionality reduction** — PCA + UMAP with HVG filtering.
+            - 🔬 **Clustering** — Leiden, Louvain, or KMeans-based clustering.
+            - 🧠 **Cell type annotation** — integrates pretrained **CellTypist** models (Human & Mouse).
+            - 💾 **Session memory** — each step persists so you can continue seamlessly.
+            - 📥 **Export results** — download normalized data or HVG lists.
 
-        **Tech stack:**  
-        Streamlit · Scanpy · scvi-tools · scikit-learn · CellTypist · Plotly
+            **Tech stack:**  
+            Streamlit · Scanpy · scvi-tools · scikit-learn · CellTypist · Plotly
 
-        ---
-        🧩 *Developed for educational and research use.*
-        """
-    )
+            ---
+            🧩 *Developed for educational and research use.*
+
+            ---
+            **Developed by [Dr. Moganti](https://github.com/kondalmoganti)**  
+            *Data Scientist, Immunologist & Molecular Biologist*
+            """
+        )
+
 
 
 	
@@ -1347,7 +1355,7 @@ st.markdown("""
 - Alignment/counting from raw FASTQs is resource-intensive; consider using Cell Ranger, STARsolo, or kb-python offline and loading counts here.
 - Always validate results with domain knowledge and replicate analyses.
 
-Developed by Dr. Moganti
+Developed by Dr. Moganti (https://www.linkedin.com/in/dr-kondal-moganti-1748b8149/)
 Data Scientist, Immunologist & Molecular Biologist
 """)
 

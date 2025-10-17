@@ -1194,7 +1194,11 @@ if step == "Cell Type Annotation":
                     pred = celltypist.annotate(ad_ct, model=str(model_path))
     
                 adata = st.session_state.adata.copy()
-                adata.obs["celltypist_label"] = pred.predicted_labels
+				labels = pred.predicted_labels  # pandas Series with index = ad_ct.obs_names
+				# Align to original adata
+				labels = labels.reindex(adata.obs_names)
+				adata.obs["celltypist_label"] = labels.fillna("unassigned").astype("category")
+                #adata.obs["celltypist_label"] = pred.predicted_labels
                 st.session_state.adata = adata
     
                 st.success("✅ CellTypist annotation complete.")

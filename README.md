@@ -1,39 +1,69 @@
-# Single-Cell RNA-seq Streamlit App (Demo-Friendly)
+# 🧬 Single-Cell RNA-seq Analysis Portal
 
-Interactive scRNA-seq analysis pipeline: **QC → normalization → DR → clustering → markers**, with optional CellTypist and RNA velocity.
-
-**Demo cap**: Limits cells (default 5,000) for safe use on Streamlit Cloud. Toggle in sidebar.
+An interactive **Streamlit-based app** for end-to-end single-cell RNA-seq (scRNA-seq) analysis — from raw count matrices to annotated cell clusters — powered by **Scanpy**, **scvi-tools**, and **CellTypist**.
 
 ---
 
-## 🚀 Streamlit Cloud
+## 🚀 Features
 
-1. Push this repo to GitHub with `app.py`, `requirements.txt`, and `runtime.txt`.
-2. Deploy to Streamlit Cloud with entrypoint `app.py`.
-3. Upload a small `.h5ad` (<100 MB).
+### 🔍 Data Input
+- Upload `.h5`, `.h5ad`, or 10X Genomics filtered feature matrix files.
+- Automatic recognition of `.h5` and `.h5ad` file structures.
+- Live preview of cell × gene count matrices.
 
-## 💻 Local run
+### 🧪 Preprocessing & QC
+- Compute per-cell and per-gene QC metrics.
+- Filter low-quality cells/genes interactively.
+
+### ⚙️ Normalization & HVG Detection
+- `sc.pp.normalize_total + log1p` standard normalization.
+- **SCVI**-based variance stabilization (optional, GPU/CPU).
+- Robust HVG computation (cellranger, seurat, seurat_v3).
+
+### 🌀 Dimensionality Reduction & Clustering
+- PCA + UMAP visualization.
+- Leiden, Louvain, and KMeans clustering.
+- Adjustable resolution and neighbors.
+
+### 🧠 Cell Type Annotation
+- Uses **CellTypist pretrained models** for automatic annotation.
+- Supports both **Human** and **Mouse** models.
+- Allows direct upload of custom `.pkl` models.
+- Includes data sanitization and normalization before annotation.
+
+### 📊 Visualization
+- Interactive **Plotly UMAPs** with color-by-cluster or cell-type.
+- Live count tables and download options.
+
+### 💾 Export
+- Download lists of highly variable genes (CSV).
+- Save intermediate `.h5ad` AnnData for downstream work.
+
+---
+
+## 🧱 Tech Stack
+
+| Component | Library |
+|------------|----------|
+| UI | [Streamlit](https://streamlit.io) |
+| Core analysis | [Scanpy](https://scanpy.readthedocs.io/en/stable/) |
+| Variance modeling | [scvi-tools](https://scvi-tools.org) |
+| Annotation | [CellTypist](https://www.celltypist.org) |
+| Visualization | [Plotly](https://plotly.com/python/) |
+| ML | scikit-learn, NumPy, pandas |
+
+---
+
+## 🧩 Installation
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -U pip
+# Clone this repository
+git clone https://github.com/<your-username>/singlecellsequencing.git
+cd singlecellsequencing
+
+# Create and activate environment
+conda create -n scrna python=3.11 -y
+conda activate scrna
+
+# Install dependencies
 pip install -r requirements.txt
-# Optional extras:
-# pip install -r optional-requirements.txt
-streamlit run app.py
-```
-
-## 🧩 Features
-- Load `.h5ad`, 10x MTX, or 10x HDF5.
-- QC & filtering.
-- Normalization (`normalize_total` + `log1p`).
-- PCA → UMAP → clustering.
-- Marker discovery & export.
-- Optional: CellTypist + scVelo preview.
-
-## 🧠 Notes
-- For big data, keep the demo cap enabled or deploy on your own VM.
-- Optional extras in `optional-requirements.txt`.
-
----
-
-MIT License

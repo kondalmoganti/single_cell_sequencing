@@ -1203,6 +1203,7 @@ if step == "Cell Type Annotation":
 				# Always replace any previous column to avoid dtype clashes across reruns
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
+					
 				labels_obj = labels.astype("object").fillna("unassigned")
                 cats = pd.Index(sorted(set(labels_obj)) - {"unassigned"}).append(pd.Index(["unassigned"]))
                 #cats = pd.Index(pd.unique(labels_obj))  # unique categories including "unassigned"

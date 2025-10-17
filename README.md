@@ -53,6 +53,16 @@ An interactive **Streamlit-based app** for end-to-end single-cell RNA-seq (scRNA
 | ML | scikit-learn, NumPy, pandas |
 
 ---
+Traag et al., 2019 — Leiden algorithm
+Gayoso et al., 2022 — scvi-tools for probabilistic modeling
+Domínguez Conde et al., 2022 — CellTypist: automated cell-type annotation for scRNA-seq
+
+🧑‍💻 Authors
+
+Developed by Dr. Moganti  and contributors.
+email: kmoganti1@gmail.com
+Built for scalable, transparent, and reproducible single-cell analysis.
+
 
 ## 🧩 Installation
 

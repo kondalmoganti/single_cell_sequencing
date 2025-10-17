@@ -1302,5 +1302,6 @@ st.markdown("""
 - Alignment/counting from raw FASTQs is resource-intensive; consider using Cell Ranger, STARsolo, or kb-python offline and loading counts here.
 - Always validate results with domain knowledge and replicate analyses.
 
-Developed by Dr. Moganti, Data scientist and Immunologiest
+Developed by Dr. Moganti
+Data Scientist, Immunologist & Molecular Biologist
 """)

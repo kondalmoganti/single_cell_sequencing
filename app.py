@@ -1086,28 +1086,71 @@ if step == "Cell Type Annotation":
         else:
             model_path = candidate
 
-	 # -------- helper: prepare matrix that CellTypist expects --------
-    def _prepare_for_celltypist(ad_in):
-        """Return a copy with X = log1p(normalize_total=1e4). Prefer existing layers if present."""
-        ad = ad_in.copy()
-        if "scvi_normalized" in ad.layers:
-            # already ~library-normalized; still ensure it's log1p
-            ad.X = ad.layers["scvi_normalized"].copy()
-            # safeguard: if values look too large, apply log1p
-            try:
-                import scipy.sparse as sp
-                mx = float(ad.X.max() if not sp.issparse(ad.X) else ad.X.max())
-                if mx > 50:
-                    sc.pp.log1p(ad)
-            except Exception:
-                pass
-        elif "log1p_norm" in ad.layers:
-            ad.X = ad.layers["log1p_norm"].copy()
-        else:
-            # compute now
-            sc.pp.normalize_total(ad, target_sum=1e4)
-            sc.pp.log1p(ad)
-        return ad
+	# -------- helper: prepare matrix that CellTypist expects --------
+
+	import numpy as np
+	import scipy.sparse as sp
+	
+	def _sanitize_X(ad):
+	    """Make sure ad.X has no NaN/Inf/negatives and is CSR float32."""
+	    # Ensure CSR sparse for efficient in-place ops
+	    if sp.issparse(ad.X):
+	        ad.X = ad.X.tocsr().astype(np.float32)
+	        d = ad.X.data
+	        # Replace NaN/Inf with 0
+	        bad = ~np.isfinite(d)
+	        if bad.any():
+	            d[bad] = 0.0
+	        # No negative values for counts
+	        neg = d < 0
+	        if neg.any():
+	            d[neg] = 0.0
+	        ad.X.eliminate_zeros()
+	    else:
+	        X = np.asarray(ad.X, dtype=np.float32, order="C")
+	        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+	        X[X < 0] = 0.0
+	        ad.X = X
+	
+	    # Optional: drop all-zero genes/cells (keeps shapes tidy)
+	    # Remove genes with zero variance/sum
+	    if sp.issparse(ad.X):
+	        gene_sum = np.asarray(ad.X.sum(axis=0)).ravel()
+	        cell_sum = np.asarray(ad.X.sum(axis=1)).ravel()
+	    else:
+	        gene_sum = ad.X.sum(axis=0)
+	        cell_sum = ad.X.sum(axis=1)
+	
+	    keep_genes = gene_sum > 0
+	    keep_cells = cell_sum > 0
+	    if keep_genes.sum() < ad.n_vars:
+	        ad._inplace_subset_var(keep_genes)
+	    if keep_cells.sum() < ad.n_obs:
+	        ad._inplace_subset_obs(keep_cells)
+	
+	def _prepare_for_celltypist(ad_in):
+	    """Return a copy with X = log1p(normalize_total=1e4), or use precomputed layer."""
+	    import scanpy as sc
+	    ad = ad_in.copy()
+	    if "scvi_normalized" in ad.layers:
+	        ad.X = ad.layers["scvi_normalized"].copy()
+	        # if values look huge, ensure log1p
+	        try:
+	            mx = float(ad.X.max() if not sp.issparse(ad.X) else ad.X.max())
+	            if mx > 50:
+	                sc.pp.log1p(ad)
+	        except Exception:
+	            pass
+	    elif "log1p_norm" in ad.layers:
+	        ad.X = ad.layers["log1p_norm"].copy()
+	    else:
+	        sc.pp.normalize_total(ad, target_sum=1e4)
+	        sc.pp.log1p(ad)
+	
+	    _sanitize_X(ad)
+	    return ad
+
+
     # -------------------------------------------------
     # -------- run CellTypist --------
     can_run = (model_path is not None) and Path(model_path).exists()
@@ -1118,6 +1161,7 @@ if step == "Cell Type Annotation":
             try:
                 import celltypist
                 ad_ct = _prepare_for_celltypist(st.session_state.adata)
+				pred = celltypist.annotate(ad_ct, model=str(model_path))
 
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
                     pred = celltypist.annotate(ad_ct, model=str(model_path))

@@ -1179,9 +1179,11 @@ if step == "Cell Type Annotation":
     
     
     # -------------------------------------------------
+    # -------------------------------------------------
     # Run CellTypist
     # -------------------------------------------------
     can_run = (model_path is not None) and Path(model_path).exists()
+    
     if st.button("Run CellTypist", key="celltypist_run"):
         if not can_run:
             st.error("No model file available. Choose a model or upload a .pkl first.")
@@ -1193,28 +1195,34 @@ if step == "Cell Type Annotation":
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
                     pred = celltypist.annotate(ad_ct, model=str(model_path))
     
+                # Align predictions back to the original AnnData
                 adata = st.session_state.adata.copy()
-				labels = pred.predicted_labels  # pandas Series with index = ad_ct.obs_names
-				# Align to original adata
-				labels = labels.reindex(adata.obs_names)
-				adata.obs["celltypist_label"] = labels.fillna("unassigned").astype("category")
-                #adata.obs["celltypist_label"] = pred.predicted_labels
+                labels = pred.predicted_labels                    # Series indexed by ad_ct.obs_names
+                labels = labels.reindex(adata.obs_names)          # align to original cells
+                adata.obs["celltypist_label"] = (
+                    labels.fillna("unassigned").astype("category")
+                )
                 st.session_state.adata = adata
     
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(
-                    adata.obs["celltypist_label"].value_counts()
-                    .rename_axis("Cell Type").reset_index(name="n"),
+                    adata.obs["celltypist_label"]
+                    .value_counts()
+                    .rename_axis("Cell Type")
+                    .reset_index(name="n"),
                     width="stretch",
                 )
     
                 if "X_umap" in adata.obsm:
                     fig = _umap_scatter(adata, color_key="celltypist_label")
                     if fig is not None:
-                        st.plotly_chart(fig, width="stretch",
-                                        config={"displaylogo": False, "responsive": True})
+                        st.plotly_chart(
+                            fig, width="stretch",
+                            config={"displaylogo": False, "responsive": True}
+                        )
                 else:
                     st.info("No UMAP found. Compute an embedding to visualize labels.")
+    
             except ModuleNotFoundError:
                 st.error("`celltypist` not installed. Add `celltypist>=1.6.0` to requirements and redeploy.")
             except Exception as e:
@@ -1293,4 +1301,6 @@ st.markdown("""
 - This MVP is for research exploration only.
 - Alignment/counting from raw FASTQs is resource-intensive; consider using Cell Ranger, STARsolo, or kb-python offline and loading counts here.
 - Always validate results with domain knowledge and replicate analyses.
+
+Developed by Dr. Moganti, Data scientist and Immunologiest
 """)

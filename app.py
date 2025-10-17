@@ -1198,10 +1198,12 @@ if step == "Cell Type Annotation":
                 # Align predictions back to the original AnnData
                 adata = st.session_state.adata.copy()
                 labels = pred.predicted_labels                    # Series indexed by ad_ct.obs_names
-                labels = labels.reindex(adata.obs_names)          # align to original cells
-                adata.obs["celltypist_label"] = (
-                    labels.fillna("unassigned").astype("category")
-                )
+                labels = labels.reindex(adata.obs_names)
+				labels_obj = labels.astype("object").fillna("unassigned")
+                cats = pd.Index(pd.unique(labels_obj))  # unique categories including "unassigned"
+                adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats)
+
+
                 st.session_state.adata = adata
     
                 st.success("✅ CellTypist annotation complete.")

@@ -1197,22 +1197,21 @@ if step == "Cell Type Annotation":
     
                 # Align predictions back to the original AnnData
                 adata = st.session_state.adata.copy()
-                
                 labels = pred.predicted_labels            # Series indexed by ad_ct.obs_names
                 labels = labels.reindex(adata.obs_names)  # align to original cells
                 
-                # Always replace any previous column to avoid dtype clashes across reruns
+                # Replace any previous column to avoid dtype/category conflicts
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
                 
-                # Build a fresh object Series, fill NaNs, then cast to categorical with all levels
+                # Build object series, fill NaNs
                 labels_obj = labels.astype("object").fillna("unassigned")
-                cats = pd.Index(sorted(set(labels_obj)) - {"unassigned"}).append(pd.Index(["unassigned"]))
-                adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
-
-                #cats = pd.Index(pd.unique(labels_obj))  # includes "unassigned"
-                #adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats)
                 
+                # Make categories with "unassigned" last (stable order)
+                base = sorted({x for x in pd.unique(labels_obj) if x != "unassigned"})
+                cats = base + ["unassigned"]
+                
+                adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
                 st.session_state.adata = adata
 
     

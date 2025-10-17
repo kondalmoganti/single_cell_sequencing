@@ -1086,36 +1086,62 @@ if step == "Cell Type Annotation":
         else:
             model_path = candidate
 
+	 # -------- helper: prepare matrix that CellTypist expects --------
+    def _prepare_for_celltypist(ad_in):
+        """Return a copy with X = log1p(normalize_total=1e4). Prefer existing layers if present."""
+        ad = ad_in.copy()
+        if "scvi_normalized" in ad.layers:
+            # already ~library-normalized; still ensure it's log1p
+            ad.X = ad.layers["scvi_normalized"].copy()
+            # safeguard: if values look too large, apply log1p
+            try:
+                import scipy.sparse as sp
+                mx = float(ad.X.max() if not sp.issparse(ad.X) else ad.X.max())
+                if mx > 50:
+                    sc.pp.log1p(ad)
+            except Exception:
+                pass
+        elif "log1p_norm" in ad.layers:
+            ad.X = ad.layers["log1p_norm"].copy()
+        else:
+            # compute now
+            sc.pp.normalize_total(ad, target_sum=1e4)
+            sc.pp.log1p(ad)
+        return ad
     # -------------------------------------------------
-    # Run CellTypist
-    # -------------------------------------------------
-    can_run = model_path is not None and Path(model_path).exists()
+    # -------- run CellTypist --------
+    can_run = (model_path is not None) and Path(model_path).exists()
     if st.button("Run CellTypist", key="celltypist_run"):
         if not can_run:
-            st.error("No model file available. Please upload or provide a valid `.pkl` path.")
+            st.error("No model file available. Choose a model or upload a .pkl first.")
         else:
             try:
                 import celltypist
-                adata = st.session_state.adata.copy()
+                ad_ct = _prepare_for_celltypist(st.session_state.adata)
+
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
-                    pred = celltypist.annotate(adata, model=str(model_path))
-                    adata.obs["celltypist_label"] = pred.predicted_labels
+                    pred = celltypist.annotate(ad_ct, model=str(model_path))
+
+                adata = st.session_state.adata.copy()
+                adata.obs["celltypist_label"] = pred.predicted_labels
                 st.session_state.adata = adata
+
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(
                     adata.obs["celltypist_label"].value_counts()
                     .rename_axis("Cell Type").reset_index(name="n"),
                     width="stretch",
                 )
+
                 if "X_umap" in adata.obsm:
                     fig = _umap_scatter(adata, color_key="celltypist_label")
                     if fig is not None:
                         st.plotly_chart(fig, width="stretch",
                                         config={"displaylogo": False, "responsive": True})
                 else:
-                    st.info("No UMAP found. Compute embedding first to visualize labels.")
+                    st.info("No UMAP found. Compute an embedding to visualize labels.")
             except ModuleNotFoundError:
-                st.error("`celltypist` is missing. Add `celltypist>=1.6.0` to requirements.txt and redeploy.")
+                st.error("`celltypist` not installed. Add `celltypist>=1.6.0` to requirements and redeploy.")
             except Exception as e:
                 st.error(f"CellTypist failed: {e}")
 

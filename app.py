@@ -614,98 +614,75 @@ if step == "Normalize & HVGs":
             st.info("Tip: pin Python 3.11 in runtime.txt and add `scvi-tools` to requirements.")
 
     # ---------- Highly Variable Genes ----------
-	st.subheader("Highly Variable Genes")
-	
-	flavor_choice = st.selectbox(
-	    "HVG flavor",
-	    ["cell_ranger", "seurat", "seurat_v3 (needs numba)"],
-	    key="hvg_flavor_choice",
-	)
-	flavor_map = {
-	    "cell_ranger": "cell_ranger",
-	    "seurat": "seurat",
-	    "seurat_v3 (needs numba)": "seurat_v3",
-	}
-	flavor = flavor_map[flavor_choice]
-	
-	n_top = st.number_input("n_top_genes", value=2000, step=500, key="hvg_n_top")
-	
-	if st.button("Find HVGs", key="find_hvg"):
-	    import numpy as np
-	    import pandas as pd
-	    import scipy.sparse as sp
-	    import scanpy as sc
-	
-	    # Work on a copy; use SCVI-normalized values if present
-	    ad_work = adata.copy()
-	    if "scvi_normalized" in ad_work.layers:
-	        ad_work.X = ad_work.layers["scvi_normalized"]
-	
-	    # ---- Prefilter all-zero genes to avoid duplicate bin edges
-	    X = ad_work.X
-	    gsum = (np.asarray(X.sum(axis=0)).ravel() if sp.issparse(X) else X.sum(axis=0))
-	    ad_work_nz = ad_work[:, gsum > 0].copy()
-	
-	    def _run_hvg(fl: str):
-	        sc.pp.highly_variable_genes(ad_work_nz, flavor=fl, n_top_genes=int(n_top))
-	
-	    try:
-	        _run_hvg(flavor)
-	    except Exception as e:
-	        st.warning(
-	            f"HVG ({flavor}) failed: {e}\n"
-	            "→ Prefiltered zero-count genes and falling back to flavor='cell_ranger'."
-	        )
-	        _run_hvg("cell_ranger")
-	
-	    # ---- Map HVG mask back to the full object (including genes dropped above)
-	    hv_mask = pd.Series(False, index=adata.var_names)
-	    hv_mask.loc[ad_work_nz.var_names] = ad_work_nz.var["highly_variable"].values
-	    adata.var["highly_variable"] = hv_mask.values
-	
-	    # ---- Preview
-	    hvgs = adata.var[adata.var["highly_variable"]].copy()
-	    st.success(f"Found {hvgs.shape[0]} highly variable genes.")
-	
-	    preview_cols = [
-	        c
-	        for c in ["means", "dispersions", "dispersions_norm", "variance", "variance_norm"]
-	        if c in ad_work_nz.var.columns
-	    ]
-	    show_cols = preview_cols[:2] if preview_cols else []
-	    top = ad_work_nz.var.loc[ad_work_nz.var["highly_variable"]].head(20)
-	    to_show = top[show_cols].copy() if show_cols else top.copy()
-	    to_show.insert(0, "gene", to_show.index)
-	    st.dataframe(to_show, width="stretch")
+    st.subheader("Highly Variable Genes")
 
+    flavor_choice = st.selectbox(
+        "HVG flavor",
+        ["cell_ranger", "seurat", "seurat_v3 (needs numba)"],
+        key="hvg_flavor_choice",
+    )
+    flavor_map = {
+        "cell_ranger": "cell_ranger",
+        "seurat": "seurat",
+        "seurat_v3 (needs numba)": "seurat_v3",
+    }
+    flavor = flavor_map[flavor_choice]
 
-            # Download full HVG gene list
-            csv_bytes = hvgs.index.to_series().to_csv(index=False).encode()
-            st.download_button(
-                "Download HVG gene list (CSV)",
-                csv_bytes,
-                file_name="highly_variable_genes.csv",
-                mime="text/csv",
-                key="hvg_download",
-            )
-        except ImportError as e:
-            st.warning(f"{e}. Falling back to flavor='seurat' (no numba needed).")
-            sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=int(n_top))
-            hvgs = adata.var[adata.var["highly_variable"]].copy()
-            st.success(f"Found {hvgs.shape[0]} highly variable genes.")
-            to_show = hvgs.head(20).copy()
-            to_show.insert(0, "gene", hvgs.head(20).index)
-            st.dataframe(to_show, width="stretch")
-            csv_bytes = hvgs.index.to_series().to_csv(index=False).encode()
-            st.download_button(
-                "Download HVG gene list (CSV)",
-                csv_bytes,
-                file_name="highly_variable_genes.csv",
-                mime="text/csv",
-                key="hvg_download_fallback",
-            )
+    n_top = st.number_input("n_top_genes", value=2000, step=500, key="hvg_n_top")
+
+    if st.button("Find HVGs", key="find_hvg"):
+        import scipy.sparse as sp
+
+        # Work on a copy; use SCVI-normalized values if present
+        ad_work = adata.copy()
+        if "scvi_normalized" in ad_work.layers:
+            ad_work.X = ad_work.layers["scvi_normalized"]
+
+        # ---- Prefilter all-zero genes to avoid duplicate bin edges
+        X = ad_work.X
+        gsum = (np.asarray(X.sum(axis=0)).ravel() if sp.issparse(X) else X.sum(axis=0))
+        ad_work_nz = ad_work[:, gsum > 0].copy()
+
+        def _run_hvg(fl: str):
+            sc.pp.highly_variable_genes(ad_work_nz, flavor=fl, n_top_genes=int(n_top))
+
+        try:
+            _run_hvg(flavor)
         except Exception as e:
-            st.error(f"HVG computation failed: {e}")
+            st.warning(
+                f"HVG ({flavor}) failed: {e}\n"
+                "→ Prefiltered zero-count genes and falling back to flavor='cell_ranger'."
+            )
+            _run_hvg("cell_ranger")
+
+        # ---- Map HVG mask back to the full object (including genes dropped above)
+        hv_mask = pd.Series(False, index=adata.var_names)
+        hv_mask.loc[ad_work_nz.var_names] = ad_work_nz.var["highly_variable"].values
+        adata.var["highly_variable"] = hv_mask.values
+
+        # ---- Preview
+        hvgs = adata.var[adata.var["highly_variable"]].copy()
+        st.success(f"Found {hvgs.shape[0]} highly variable genes.")
+
+        preview_cols = [
+            c for c in ["means", "dispersions", "dispersions_norm", "variance", "variance_norm"]
+            if c in ad_work_nz.var.columns
+        ]
+        show_cols = preview_cols[:2] if preview_cols else []
+        top = ad_work_nz.var.loc[ad_work_nz.var["highly_variable"]].head(20)
+        to_show = top[show_cols].copy() if show_cols else top.copy()
+        to_show.insert(0, "gene", to_show.index)
+        st.dataframe(to_show, width="stretch")
+
+        # Download full HVG gene list
+        csv_bytes = hvgs.index.to_series().to_csv(index=False).encode()
+        st.download_button(
+            "Download HVG gene list (CSV)",
+            csv_bytes,
+            file_name="highly_variable_genes.csv",
+            mime="text/csv",
+            key="hvg_download",
+        )
 
     if st.button("Save and continue", key="normalize_save"):
         st.session_state.adata = adata

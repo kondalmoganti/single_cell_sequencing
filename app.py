@@ -200,6 +200,7 @@ step = st.sidebar.radio(
         "Cell Type Annotation",
         "(Optional) Trajectory",
         "Export",
+		"ℹ️ About this app"
     ],
 )
 
@@ -1304,6 +1305,39 @@ if step == "Export":
             with open(outp, "rb") as f:
                 st.download_button("Download .h5ad", data=f, file_name=fname, mime="application/octet-stream")
     st.caption("Tip: also export cluster markers as CSV from the DE tab.")
+
+if step == "ℹ️ About this app":
+	with st.expander("ℹ️ About this app", expanded=False):
+    st.markdown(
+        """
+        ### 🧫 Single-Cell RNA-seq Analysis Portal
+
+        This interactive Streamlit application provides an **end-to-end single-cell RNA-seq pipeline**
+        built on top of the **Scanpy** and **scvi-tools** ecosystems.  
+        It allows users to upload `.h5ad` or `.h5` data matrices and perform essential preprocessing,
+        dimensionality reduction, clustering, and automated cell-type annotation — all without coding.
+
+        **Key features:**
+        - ✅ **Data upload & preview** — load `.h5`, `.h5ad`, or 10X-formatted datasets.
+        - ⚙️ **Quality Control (QC)** — compute per-cell and per-gene metrics.
+        - 📊 **Normalization & HVG detection** — supports Scanpy and SCVI variance stabilization.
+        - 🌀 **Dimensionality reduction** — PCA + UMAP with HVG filtering.
+        - 🔬 **Clustering** — Leiden, Louvain, or KMeans-based clustering.
+        - 🧠 **Cell type annotation** — integrates pretrained **CellTypist** models (Human & Mouse).
+        - 💾 **Session memory** — each step persists so you can continue seamlessly.
+        - 📥 **Export results** — download normalized data or HVG lists.
+
+        **Tech stack:**  
+        Streamlit · Scanpy · scvi-tools · scikit-learn · CellTypist · Plotly
+
+        ---
+        🧩 *Developed for educational and research use.*
+        """
+    )
+
+
+	
+	
 
 # Footer
 st.markdown("""

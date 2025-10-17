@@ -1126,26 +1126,56 @@ if step == "Cell Type Annotation":
             ad._inplace_subset_obs(keep_cells)
     
     
+    #def _prepare_for_celltypist(ad_in):
     def _prepare_for_celltypist(ad_in):
-        """Return a copy with X = log1p(normalize_total=1e4), or use precomputed layer."""
-        import scanpy as sc
-        ad = ad_in.copy()
-        if "scvi_normalized" in ad.layers:
-            ad.X = ad.layers["scvi_normalized"].copy()
-            try:
-                mx = float(ad.X.max() if not sp.issparse(ad.X) else ad.X.max())
-                if mx > 50:
-                    sc.pp.log1p(ad)
-            except Exception:
-                pass
-        elif "log1p_norm" in ad.layers:
-            ad.X = ad.layers["log1p_norm"].copy()
+    """
+    Return a copy where X = log1p(normalize_total=1e4) from raw counts.
+    This matches CellTypist's required input exactly.
+    """
+    import scanpy as sc
+    import numpy as np
+    import scipy.sparse as sp
+
+    ad = ad_in.copy()
+
+    # 1) Start from raw counts if available; otherwise use current X as counts
+    if "counts" in ad.layers:
+        ad.X = ad.layers["counts"].copy()
+    elif ad.raw is not None and ad.raw.X is not None:
+        ad.X = ad.raw.X.copy()
+    else:
+        ad.X = ad.X.copy()
+
+    # 2) Normalize to 1e4 library size and log1p
+    sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
+    sc.pp.log1p(ad)
+
+    # 3) Basic hygiene: unique var names
+    try:
+        ad.var_names_make_unique()
+    except Exception:
+        pass
+
+    # 4) Ensure no NaN/Inf/negatives and drop all-zero cells/genes
+    _sanitize_X(ad)
+
+    # 5) (Optional) sanity check: sums of expm1(X) ≈ 1e4 per cell
+    try:
+        if sp.issparse(ad.X):
+            s = np.asarray(ad.X.expm1().sum(axis=1)).ravel()
         else:
-            sc.pp.normalize_total(ad, target_sum=1e4)
+            s = np.expm1(ad.X).sum(axis=1)
+        med = float(np.median(s))
+        # Allow 20% tolerance
+        if not (8000 <= med <= 12000):
+            # Re-normalize if needed (rare)
+            sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
             sc.pp.log1p(ad)
-    
-        _sanitize_X(ad)
-        return ad
+            _sanitize_X(ad)
+    except Exception:
+        pass
+
+    return ad
     
     
     # -------------------------------------------------

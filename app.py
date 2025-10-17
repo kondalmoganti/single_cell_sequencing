@@ -1029,79 +1029,76 @@ if step == "Cell Type Annotation":
 
 
     # -------------------------------------------------
-    # Organism selection
-    # -------------------------------------------------
-    organism = st.selectbox("Organism", ["Human", "Mouse"], key="ct_organism")
-
-    MODEL_CATALOG = {
-        "Human": {
-			"Immune (low-res)": "Immune_All_Low.pkl",
+	# Organism selection
+	# -------------------------------------------------
+	organism = st.selectbox("Organism", ["Human", "Mouse"], key="ct_organism")
+	
+	MODEL_CATALOG = {
+	    "Human": {
+	        "Immune (low-res)": "Immune_All_Low.pkl",
 	        "Immune (high-res)": "Immune_All_High.pkl",
 	        "All tissues (low-res)": "All_tissues_low_res.pkl",
 	        "Lung (low-res)": "Lung_low_res.pkl",
 	        "PBMC (blood)": "PBMC_blood.pkl",
-        },
-        "Mouse": {
-			"All tissues (low-res)": "Mouse_All_tissues_low_res.pkl",
+	    },
+	    "Mouse": {
+	        "All tissues (low-res)": "Mouse_All_tissues_low_res.pkl",
 	        "Immune (low-res)": "Mouse_Immune_low_res.pkl",
 	        "Brain (low-res)": "Mouse_Brain_low_res.pkl",
-        },
-    }
-    organism_models = MODEL_CATALOG[organism]
-
-    model_choice = st.selectbox(
-        f"Choose {organism} model",
-        list(organism_models.keys()) + ["Custom (.pkl path)", "Upload .pkl now"],
-        key="ct_model_choice",
-    )
-
-    uploaded_pkl = None
-    model_path = None
-
-    if model_choice == "Custom (.pkl path)":
-        custom_path = st.text_input(
-            "Enter full path to your .pkl model file",
-            value=str(model_dir / "Your_Model.pkl"),
-            key="ct_custom_path",
-        )
-        model_path = Path(custom_path)
-
-    elif model_choice == "Upload .pkl now":
-        uploaded_pkl = st.file_uploader("Upload CellTypist model (.pkl)", type=["pkl"], key="ct_upload")
-        if uploaded_pkl is not None:
-            target = model_dir / uploaded_pkl.name
-            target.write_bytes(uploaded_pkl.read())
-            st.success(f"✅ Saved uploaded model to {target}")
-            model_path = target
-
-    else:
-        model_filename = organism_models[model_choice]
-        candidate = ensure_celltypist_model(model_filename)
-        if candidate is None:
-            st.error(
-                "Couldn't download the model (network/DNS blocked). "
-                "Please switch to **Upload .pkl now** above and provide the model file, "
-                "or commit it under `data/models/` in your repo."
-            )
-        else:
-            model_path = candidate
-
+	    },
+	}
+	organism_models = MODEL_CATALOG[organism]
+	
+	model_choice = st.selectbox(
+	    f"Choose {organism} model",
+	    list(organism_models.keys()) + ["Custom (.pkl path)", "Upload .pkl now"],
+	    key="ct_model_choice",
+	)
+	
+	uploaded_pkl = None
+	model_path = None
+	
+	if model_choice == "Custom (.pkl path)":
+	    custom_path = st.text_input(
+	        "Enter full path to your .pkl model file",
+	        value=str(model_dir / "Your_Model.pkl"),
+	        key="ct_custom_path",
+	    )
+	    model_path = Path(custom_path)
+	
+	elif model_choice == "Upload .pkl now":
+	    uploaded_pkl = st.file_uploader("Upload CellTypist model (.pkl)", type=["pkl"], key="ct_upload")
+	    if uploaded_pkl is not None:
+	        target = model_dir / uploaded_pkl.name
+	        target.write_bytes(uploaded_pkl.read())
+	        st.success(f"✅ Saved uploaded model to {target}")
+	        model_path = target
+	
+	else:
+	    model_filename = organism_models[model_choice]
+	    candidate = ensure_celltypist_model(model_filename)
+	    if candidate is None:
+	        st.error(
+	            "Couldn't download the model (network/DNS blocked). "
+	            "Please switch to **Upload .pkl now** above and provide the model file, "
+	            "or commit it under `data/models/` in your repo."
+	        )
+	    else:
+	        model_path = candidate
+	
+	
 	# -------- helper: prepare matrix that CellTypist expects --------
-
 	import numpy as np
 	import scipy.sparse as sp
 	
 	def _sanitize_X(ad):
 	    """Make sure ad.X has no NaN/Inf/negatives and is CSR float32."""
-	    # Ensure CSR sparse for efficient in-place ops
 	    if sp.issparse(ad.X):
 	        ad.X = ad.X.tocsr().astype(np.float32)
 	        d = ad.X.data
-	        # Replace NaN/Inf with 0
 	        bad = ~np.isfinite(d)
 	        if bad.any():
 	            d[bad] = 0.0
-	        # No negative values for counts
 	        neg = d < 0
 	        if neg.any():
 	            d[neg] = 0.0
@@ -1112,8 +1109,7 @@ if step == "Cell Type Annotation":
 	        X[X < 0] = 0.0
 	        ad.X = X
 	
-	    # Optional: drop all-zero genes/cells (keeps shapes tidy)
-	    # Remove genes with zero variance/sum
+	    # Remove all-zero genes/cells
 	    if sp.issparse(ad.X):
 	        gene_sum = np.asarray(ad.X.sum(axis=0)).ravel()
 	        cell_sum = np.asarray(ad.X.sum(axis=1)).ravel()
@@ -1128,13 +1124,13 @@ if step == "Cell Type Annotation":
 	    if keep_cells.sum() < ad.n_obs:
 	        ad._inplace_subset_obs(keep_cells)
 	
+	
 	def _prepare_for_celltypist(ad_in):
 	    """Return a copy with X = log1p(normalize_total=1e4), or use precomputed layer."""
 	    import scanpy as sc
 	    ad = ad_in.copy()
 	    if "scvi_normalized" in ad.layers:
 	        ad.X = ad.layers["scvi_normalized"].copy()
-	        # if values look huge, ensure log1p
 	        try:
 	            mx = float(ad.X.max() if not sp.issparse(ad.X) else ad.X.max())
 	            if mx > 50:
@@ -1149,47 +1145,48 @@ if step == "Cell Type Annotation":
 	
 	    _sanitize_X(ad)
 	    return ad
+	
+	
+	# -------------------------------------------------
+	# Run CellTypist
+	# -------------------------------------------------
+	can_run = (model_path is not None) and Path(model_path).exists()
+	if st.button("Run CellTypist", key="celltypist_run"):
+	    if not can_run:
+	        st.error("No model file available. Choose a model or upload a .pkl first.")
+	    else:
+	        try:
+	            import celltypist
+	            ad_ct = _prepare_for_celltypist(st.session_state.adata)
+	
+	            with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
+	                pred = celltypist.annotate(ad_ct, model=str(model_path))
+	
+	            adata = st.session_state.adata.copy()
+	            adata.obs["celltypist_label"] = pred.predicted_labels
+	            st.session_state.adata = adata
+	
+	            st.success("✅ CellTypist annotation complete.")
+	            st.dataframe(
+	                adata.obs["celltypist_label"].value_counts()
+	                .rename_axis("Cell Type").reset_index(name="n"),
+	                width="stretch",
+	            )
+	
+	            if "X_umap" in adata.obsm:
+	                fig = _umap_scatter(adata, color_key="celltypist_label")
+	                if fig is not None:
+	                    st.plotly_chart(fig, width="stretch",
+	                                    config={"displaylogo": False, "responsive": True})
+	            else:
+	                st.info("No UMAP found. Compute an embedding to visualize labels.")
+	        except ModuleNotFoundError:
+	            st.error("`celltypist` not installed. Add `celltypist>=1.6.0` to requirements and redeploy.")
+	        except Exception as e:
+	            st.error(f"CellTypist failed: {e}")
+	
+	st.divider()
 
-
-    # -------------------------------------------------
-    # -------- run CellTypist --------
-    can_run = (model_path is not None) and Path(model_path).exists()
-    if st.button("Run CellTypist", key="celltypist_run"):
-        if not can_run:
-            st.error("No model file available. Choose a model or upload a .pkl first.")
-        else:
-            try:
-                import celltypist
-                ad_ct = _prepare_for_celltypist(st.session_state.adata)
-				pred = celltypist.annotate(ad_ct, model=str(model_path))
-
-                with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
-                    pred = celltypist.annotate(ad_ct, model=str(model_path))
-
-                adata = st.session_state.adata.copy()
-                adata.obs["celltypist_label"] = pred.predicted_labels
-                st.session_state.adata = adata
-
-                st.success("✅ CellTypist annotation complete.")
-                st.dataframe(
-                    adata.obs["celltypist_label"].value_counts()
-                    .rename_axis("Cell Type").reset_index(name="n"),
-                    width="stretch",
-                )
-
-                if "X_umap" in adata.obsm:
-                    fig = _umap_scatter(adata, color_key="celltypist_label")
-                    if fig is not None:
-                        st.plotly_chart(fig, width="stretch",
-                                        config={"displaylogo": False, "responsive": True})
-                else:
-                    st.info("No UMAP found. Compute an embedding to visualize labels.")
-            except ModuleNotFoundError:
-                st.error("`celltypist` not installed. Add `celltypist>=1.6.0` to requirements and redeploy.")
-            except Exception as e:
-                st.error(f"CellTypist failed: {e}")
-
-    st.divider()
 
     # -------------------------------------------------
     # Future: other annotation tools

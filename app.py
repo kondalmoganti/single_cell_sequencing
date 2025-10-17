@@ -197,7 +197,7 @@ step = st.sidebar.radio(
         "Normalize & HVGs",
         "Embedding & Clustering",
         "Markers & DE",
-        "Cell Type Annotation (optional)",
+        "Cell Type Annotation",
         "(Optional) Trajectory",
         "Export",
     ],
@@ -935,9 +935,9 @@ if step == "Markers & DE":
             st.error(f"DE failed: {e}")
 
 # ---------------------------
-# Step 7: Cell Type Annotation (optional)
+# Step 7: Cell Type Annotation
 # ---------------------------
-if step == "Cell Type Annotation (optional)":
+if step == "Cell Type Annotation":
     if st.session_state.adata is None:
         st.stop()
 

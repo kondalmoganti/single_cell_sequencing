@@ -1307,3 +1307,5 @@ st.markdown("""
 Developed by Dr. Moganti
 Data Scientist, Immunologist & Molecular Biologist
 """)
+
+st.markdown("<div style='text-align:center; color:gray;'>Developed by Moganti </div>", unsafe_allow_html=True)

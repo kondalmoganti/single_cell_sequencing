@@ -1197,20 +1197,24 @@ if step == "Cell Type Annotation":
     
                 # Align predictions back to the original AnnData
                 adata = st.session_state.adata.copy()
-                labels = pred.predicted_labels                    # Series indexed by ad_ct.obs_names
-                labels = labels.reindex(adata.obs_names)
-
-				# Always replace any previous column to avoid dtype clashes across reruns
+                
+                labels = pred.predicted_labels            # Series indexed by ad_ct.obs_names
+                labels = labels.reindex(adata.obs_names)  # align to original cells
+                
+                # Always replace any previous column to avoid dtype clashes across reruns
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
-					
-				labels_obj = labels.astype("object").fillna("unassigned")
+                
+                # Build a fresh object Series, fill NaNs, then cast to categorical with all levels
+                labels_obj = labels.astype("object").fillna("unassigned")
                 cats = pd.Index(sorted(set(labels_obj)) - {"unassigned"}).append(pd.Index(["unassigned"]))
-                #cats = pd.Index(pd.unique(labels_obj))  # unique categories including "unassigned"
                 adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
 
-
+                #cats = pd.Index(pd.unique(labels_obj))  # includes "unassigned"
+                #adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats)
+                
                 st.session_state.adata = adata
+
     
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(

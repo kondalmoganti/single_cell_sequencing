@@ -1033,16 +1033,16 @@ if step == "Cell Type Annotation":
 
     MODEL_CATALOG = {
         "Human": {
-            "Immune (low-res)": "Immune_All_Low.pkl",
-            "Immune (high-res)": "Immune_All_High.pkl",
-            "All tissues (low-res)": "Human_All_Low.pkl",
-            "Lung (low-res)": "Human_Lung_Low.pkl",
-            "PBMC (blood)": "Human_PBMC_Low.pkl",
+			"Immune (low-res)": "Immune_All_Low.pkl",
+	        "Immune (high-res)": "Immune_All_High.pkl",
+	        "All tissues (pan-fetal)": "Pan_Fetal_Human.pkl",
+	        "Lung (atlas)": "Human_Lung_Atlas.pkl",
+	        "PBMC (blood)": "Healthy_COVID19_PBMC.pkl",
         },
         "Mouse": {
-            "All tissues (low-res)": "Mouse_All_Low.pkl",
-            "Immune (low-res)": "Mouse_Immune_Low.pkl",
-            "Brain (low-res)": "Mouse_Brain_Low.pkl",
+			"All tissues (liver ref)": "Healthy_Mouse_Liver.pkl",
+	        "Immune (developing brain)": "Developing_Mouse_Brain.pkl",
+	        "Brain (whole)": "Mouse_Whole_Brain.pkl",
         },
     }
     organism_models = MODEL_CATALOG[organism]

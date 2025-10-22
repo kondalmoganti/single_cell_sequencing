@@ -143,24 +143,27 @@ def ensure_plotly_registered():
     pio.templates.default = "plotly"
 
 
-def _umap_scatter(adata, color_key=None):
+def _umap_scatter(adata, key=None, color_key=None, title="UMAP"):
+    # allow either param name
+    if key is None and color_key is not None:
+        key = color_key
+
     if "X_umap" not in adata.obsm:
         return None
-    emb = adata.obsm["X_umap"]
-    df = pd.DataFrame({"UMAP1": emb[:, 0], "UMAP2": emb[:, 1]})
-    if color_key is not None and color_key in adata.obs:
-        df["color"] = adata.obs[color_key].astype(str)
-        color_arg = "color"
-    else:
-        color_arg = None
 
-    fig = px.scatter(
-        df,
-        x="UMAP1", y="UMAP2",
-        color=color_arg,
-        hover_data=None,
-    )
-    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+    umap = adata.obsm["X_umap"]
+    df = pd.DataFrame({"UMAP1": umap[:, 0], "UMAP2": umap[:, 1]})
+
+    if key is not None and key in adata.obs.columns:
+        col = adata.obs[key].astype("object")
+        # replace actual NaNs/None with a label so Plotly doesn’t show “nan”
+        col = col.where(pd.notna(col), other="unassigned")
+        df["color"] = col
+        fig = px.scatter(df, x="UMAP1", y="UMAP2", color="color", title=title)
+    else:
+        fig = px.scatter(df, x="UMAP1", y="UMAP2", title=title)
+
+    fig.update_layout(margin=dict(l=10, r=10, t=40, b=10))
     return fig
 
 

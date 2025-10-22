@@ -1192,26 +1192,69 @@ if step == "Cell Type Annotation":
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
                     pred = celltypist.annotate(ad_ct, model=str(model_path))
     
-                # --- Step 4: Align predictions back to original AnnData ---
-                adata = st.session_state.adata.copy()
-                labels = pred.predicted_labels.reindex(adata.obs_names)
+                # --- Step 4: Robustly extract labels ---
+                import pandas as pd
     
-                # Clear old column if it exists
+                def _extract_labels(pred_obj, index_names):
+                    """Handle all possible output shapes from CellTypist."""
+                    if hasattr(pred_obj, "predicted_labels"):
+                        s = pred_obj.predicted_labels
+                    elif hasattr(pred_obj, "labels"):
+                        s = pred_obj.labels
+                    else:
+                        s = pred_obj
+    
+                    # Handle different shapes
+                    if isinstance(s, pd.Series):
+                        ser = s
+                    elif isinstance(s, pd.DataFrame):
+                        # Pick a likely column
+                        for col in ["predicted_labels", "labels", "prediction", "cell_type"]:
+                            if col in s.columns:
+                                ser = s[col]
+                                break
+                        else:
+                            ser = s.iloc[:, 0]
+                    else:
+                        # Could be scalar or list/array
+                        if isinstance(s, (str, bytes)):
+                            ser = pd.Series([s] * len(index_names), index=index_names, dtype="object")
+                        elif hasattr(s, "__len__") and len(s) == len(index_names):
+                            ser = pd.Series(s, index=index_names)
+                        elif hasattr(s, "__len__") and len(s) == 1:
+                            ser = pd.Series([s[0]] * len(index_names), index=index_names, dtype="object")
+                        else:
+                            ser = pd.Series(["unassigned"] * len(index_names), index=index_names, dtype="object")
+    
+                    # Ensure index alignment
+                    if ser.index is None or len(ser) != len(index_names):
+                        ser = ser.reset_index(drop=True)
+                        ser.index = index_names
+                    return ser
+    
+                labels_ct = _extract_labels(pred, ad_ct.obs_names)
+    
+                # --- Step 5: Align predictions back to the original AnnData ---
+                adata = st.session_state.adata.copy()
+    
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
     
-                # Convert safely: replace None/NaN → 'unassigned'
-                labels_obj = labels.astype("object").replace({None: "unassigned", "": "unassigned"}).fillna("unassigned")
+                labels_aligned = labels_ct.reindex(adata.obs_names)
     
-                # Make stable sorted categories (ignore None)
-                uniq_labels = [x for x in pd.unique(labels_obj) if isinstance(x, str) and x != "unassigned"]
-                uniq_labels = sorted(set(uniq_labels))
+                # Clean and categorize safely
+                labels_obj = (
+                    labels_aligned.astype("object")
+                    .replace({None: "unassigned", "": "unassigned"})
+                    .fillna("unassigned")
+                )
+                uniq_labels = sorted({x for x in pd.unique(labels_obj) if isinstance(x, str) and x != "unassigned"})
                 cats = uniq_labels + ["unassigned"]
     
                 adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
                 st.session_state.adata = adata
     
-                # --- Step 5: Display results ---
+                # --- Step 6: Display results ---
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(
                     adata.obs["celltypist_label"]
@@ -1221,7 +1264,7 @@ if step == "Cell Type Annotation":
                     width="stretch",
                 )
     
-                # --- Step 6: UMAP Visualization ---
+                # --- Step 7: UMAP Visualization ---
                 if "X_umap" in adata.obsm:
                     fig = _umap_scatter(adata, color_key="celltypist_label")
                     if fig is not None:

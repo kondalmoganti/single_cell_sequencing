@@ -77,5 +77,5 @@ conda activate scrna
 
 # Install dependencies
 pip install -r requirements.txt
-streamlit run single_cell_sequencing/main.py
+streamlit run single_cell_sequencing/app.py
 

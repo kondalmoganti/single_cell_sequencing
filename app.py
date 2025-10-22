@@ -145,27 +145,48 @@ def ensure_plotly_registered():
 
 def _umap_scatter(adata, key=None, color_key=None, title="UMAP"):
     # allow either param name
-    if key is None and color_key is not None:
+    if key is None:
         key = color_key
 
     if "X_umap" not in adata.obsm:
         return None
 
     umap = adata.obsm["X_umap"]
-    df = pd.DataFrame({"UMAP1": umap[:, 0], "UMAP2": umap[:, 1]})
+
+    # IMPORTANT: use obs_names as the index to avoid alignment issues
+    df = pd.DataFrame(
+        {"UMAP1": umap[:, 0], "UMAP2": umap[:, 1]},
+        index=adata.obs_names
+    )
 
     if key is not None and key in adata.obs.columns:
+        # take the column, convert to object strings, and replace NaN/None
         col = adata.obs[key].astype("object")
-        # replace actual NaNs/None with a label so Plotly doesn’t show “nan”
         col = col.where(pd.notna(col), other="unassigned")
-        df["color"] = col
-        fig = px.scatter(df, x="UMAP1", y="UMAP2", color="color", title=title)
+
+        # assign by *position* to avoid index alignment problems
+        df["color"] = col.values
+
+        # put "unassigned" last; make it gray
+        cats = [c for c in pd.unique(df["color"]) if c != "unassigned"]
+        cats = sorted(cats) + (["unassigned"] if "unassigned" in df["color"].values else [])
+
+        color_map = {c: None for c in cats}  # let Plotly pick colors
+        if "unassigned" in cats:
+            color_map["unassigned"] = "#9e9e9e"  # gray
+
+        fig = px.scatter(
+            df, x="UMAP1", y="UMAP2",
+            color="color",
+            category_orders={"color": cats},
+            color_discrete_map=color_map,
+            title=title
+        )
     else:
         fig = px.scatter(df, x="UMAP1", y="UMAP2", title=title)
 
     fig.update_layout(margin=dict(l=10, r=10, t=40, b=10))
     return fig
-
 
 def _rank_genes_df(adata, groupby="leiden"):
     # Convert scanpy rank_genes_groups result into a tidy DataFrame

@@ -68,7 +68,7 @@ Built for scalable, transparent, and reproducible single-cell analysis.
 
 ```bash
 # Clone this repository
-git clone https://github.com/<your-username>/singlecellsequencing.git
+git clone https://github.com/kondalmoganti/singlecellsequencing.git
 cd singlecellsequencing
 
 # Create and activate environment

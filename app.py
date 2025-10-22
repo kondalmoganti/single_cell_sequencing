@@ -1351,7 +1351,7 @@ if step == "ℹ️ About this app":
 st.markdown("""
 ---
 **Disclaimers**
-- This MVP is for research exploration only.
+- This is for research exploration only.
 - Alignment/counting from raw FASTQs is resource-intensive; consider using Cell Ranger, STARsolo, or kb-python offline and loading counts here.
 - Always validate results with domain knowledge and replicate analyses.
 

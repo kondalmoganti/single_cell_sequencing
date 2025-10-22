@@ -1090,20 +1090,47 @@ if step == "Cell Type Annotation":
     
     
     # -------- helper: prepare matrix that CellTypist expects --------
+    # ---------- helpers (safe to keep here) ----------
     import numpy as np
+    import pandas as pd
     import scipy.sparse as sp
+    from pathlib import Path
+    
+    def ensure_gene_symbols_local(ad_in, organism="Human"):
+        """Set var_names to gene symbols using existing var columns; strip Ensembl versions; make unique."""
+        ad = ad_in.copy()
+        var = ad.var
+        # Prefer common symbol columns if present
+        for col in ["gene_symbols", "gene_symbol", "symbol", "GeneSymbol", "SYMBOL"]:
+            if col in var.columns:
+                symbols = var[col].astype(str)
+                break
+        else:
+            symbols = pd.Index(ad.var_names).astype(str)
+    
+        # Strip Ensembl version suffix like ".12"
+        symbols = symbols.str.replace(r"\.\d+$", "", regex=True)
+        # For human, uppercase helps match HGNC (mouse is case-sensitive; leave as-is)
+        if organism == "Human":
+            symbols = symbols.str.upper()
+    
+        ad.var["symbol"] = symbols.values
+        ad.var_names = ad.var["symbol"].values
+        try:
+            ad.var_names_make_unique()
+        except Exception:
+            pass
+        return ad
     
     def _sanitize_X(ad):
-        """Make sure ad.X has no NaN/Inf/negatives and is CSR float32."""
+        """Remove NaN/Inf/negative; keep shapes to preserve alignment."""
         if sp.issparse(ad.X):
             ad.X = ad.X.tocsr().astype(np.float32)
             d = ad.X.data
             bad = ~np.isfinite(d)
-            if bad.any():
-                d[bad] = 0.0
+            if bad.any(): d[bad] = 0.0
             neg = d < 0
-            if neg.any():
-                d[neg] = 0.0
+            if neg.any(): d[neg] = 0.0
             ad.X.eliminate_zeros()
         else:
             X = np.asarray(ad.X, dtype=np.float32, order="C")
@@ -1111,75 +1138,36 @@ if step == "Cell Type Annotation":
             X[X < 0] = 0.0
             ad.X = X
     
-        # Remove all-zero genes/cells
-        if sp.issparse(ad.X):
-            gene_sum = np.asarray(ad.X.sum(axis=0)).ravel()
-            cell_sum = np.asarray(ad.X.sum(axis=1)).ravel()
-        else:
-            gene_sum = ad.X.sum(axis=0)
-            cell_sum = ad.X.sum(axis=1)
-    
-        keep_genes = gene_sum > 0
-        keep_cells = cell_sum > 0
-        if keep_genes.sum() < ad.n_vars:
-            ad._inplace_subset_var(keep_genes)
-        if keep_cells.sum() < ad.n_obs:
-            ad._inplace_subset_obs(keep_cells)
-    
-    
-    #def _prepare_for_celltypist(ad_in):
     def _prepare_for_celltypist(ad_in):
-	    """
-	    Return a copy where X = log1p(normalize_total=1e4) from raw counts.
-	    This matches CellTypist's required input exactly.
-	    """
-	    import scanpy as sc
-	    import numpy as np
-	    import scipy.sparse as sp
-	
-	    ad = ad_in.copy()
-	
-	    # 1) Start from raw counts if available; otherwise use current X as counts
-	    if "counts" in ad.layers:
-	        ad.X = ad.layers["counts"].copy()
-	    elif ad.raw is not None and ad.raw.X is not None:
-	        ad.X = ad.raw.X.copy()
-	    else:
-	        ad.X = ad.X.copy()
-	
-	    # 2) Normalize to 1e4 library size and log1p
-	    sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
-	    sc.pp.log1p(ad)
-	
-	    # 3) Basic hygiene: unique var names
-	    try:
-	        ad.var_names_make_unique()
-	    except Exception:
-	        pass
-	
-	    # 4) Ensure no NaN/Inf/negatives and drop all-zero cells/genes
-	    _sanitize_X(ad)
-	
-	    # 5) (Optional) sanity check: sums of expm1(X) ≈ 1e4 per cell
-	    try:
-	        if sp.issparse(ad.X):
-	            s = np.asarray(ad.X.expm1().sum(axis=1)).ravel()
-	        else:
-	            s = np.expm1(ad.X).sum(axis=1)
-	        med = float(np.median(s))
-	        # Allow 20% tolerance
-	        if not (8000 <= med <= 12000):
-	            # Re-normalize if needed (rare)
-	            sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
-	            sc.pp.log1p(ad)
-	            _sanitize_X(ad)
-	    except Exception:
-	        pass
-	
-	    return ad
+        """Build X = log1p(normalize_total=1e4) from raw counts (layers['counts'] or raw.X or X)."""
+        import scanpy as sc
+        ad = ad_in.copy()
+        if "counts" in ad.layers:
+            ad.X = ad.layers["counts"].copy()
+        elif ad.raw is not None and ad.raw.X is not None:
+            ad.X = ad.raw.X.copy()
+        else:
+            ad.X = ad.X.copy()
+        sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
+        sc.pp.log1p(ad)
+        try:
+            ad.var_names_make_unique()
+        except Exception:
+            pass
+        _sanitize_X(ad)
+        # light sanity check; if far from 1e4, renormalize once
+        try:
+            s = (np.asarray(ad.X.expm1().sum(axis=1)).ravel()
+                 if sp.issparse(ad.X) else np.expm1(ad.X).sum(axis=1))
+            med = float(np.median(s))
+            if not (8000 <= med <= 12000):
+                sc.pp.normalize_total(ad, target_sum=1e4, inplace=True)
+                sc.pp.log1p(ad); _sanitize_X(ad)
+        except Exception:
+            pass
+        return ad
+    # ---------- /helpers ----------
     
-    
-    # -------------------------------------------------
     # -------------------------------------------------
     # Run CellTypist
     # -------------------------------------------------
@@ -1191,30 +1179,35 @@ if step == "Cell Type Annotation":
         else:
             try:
                 import celltypist
-                ad_ct = _prepare_for_celltypist(st.session_state.adata)
     
+                # 1) ensure gene symbols first (use your organism selectbox)
+                ad_src = st.session_state.adata
+                org = organism if "organism" in locals() else "Human"
+                ad_syms = ensure_gene_symbols_local(ad_src, organism=org)
+    
+                # 2) build the exact matrix CellTypist expects
+                ad_ct = _prepare_for_celltypist(ad_syms)
+    
+                # 3) annotate
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
                     pred = celltypist.annotate(ad_ct, model=str(model_path))
     
-                # Align predictions back to the original AnnData
+                # 4) align predictions back to the original AnnData
                 adata = st.session_state.adata.copy()
                 labels = pred.predicted_labels            # Series indexed by ad_ct.obs_names
                 labels = labels.reindex(adata.obs_names)  # align to original cells
-                
-                # Replace any previous column to avoid dtype/category conflicts
+    
+                # replace any previous column to avoid dtype/category conflicts
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
-                
-                # Build object series, fill NaNs
+    
+                # object → fillna → categorical (with 'unassigned' last, stable order)
                 labels_obj = labels.astype("object").fillna("unassigned")
-                
-                # Make categories with "unassigned" last (stable order)
                 base = sorted({x for x in pd.unique(labels_obj) if x != "unassigned"})
                 cats = base + ["unassigned"]
-                
                 adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
+    
                 st.session_state.adata = adata
-
     
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(

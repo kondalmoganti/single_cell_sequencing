@@ -1180,35 +1180,38 @@ if step == "Cell Type Annotation":
             try:
                 import celltypist
     
-                # 1) ensure gene symbols first (use your organism selectbox)
+                # --- Step 1: Ensure gene symbols ---
                 ad_src = st.session_state.adata
                 org = organism if "organism" in locals() else "Human"
                 ad_syms = ensure_gene_symbols_local(ad_src, organism=org)
     
-                # 2) build the exact matrix CellTypist expects
+                # --- Step 2: Prepare normalized matrix for CellTypist ---
                 ad_ct = _prepare_for_celltypist(ad_syms)
     
-                # 3) annotate
+                # --- Step 3: Run annotation ---
                 with st.spinner(f"Annotating cells using {Path(model_path).name}…"):
                     pred = celltypist.annotate(ad_ct, model=str(model_path))
     
-                # 4) align predictions back to the original AnnData
+                # --- Step 4: Align predictions back to original AnnData ---
                 adata = st.session_state.adata.copy()
-                labels = pred.predicted_labels            # Series indexed by ad_ct.obs_names
-                labels = labels.reindex(adata.obs_names)  # align to original cells
+                labels = pred.predicted_labels.reindex(adata.obs_names)
     
-                # replace any previous column to avoid dtype/category conflicts
+                # Clear old column if it exists
                 if "celltypist_label" in adata.obs.columns:
                     del adata.obs["celltypist_label"]
     
-                # object → fillna → categorical (with 'unassigned' last, stable order)
-                labels_obj = labels.astype("object").fillna("unassigned")
-                base = sorted({x for x in pd.unique(labels_obj) if x != "unassigned"})
-                cats = base + ["unassigned"]
-                adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
+                # Convert safely: replace None/NaN → 'unassigned'
+                labels_obj = labels.astype("object").replace({None: "unassigned", "": "unassigned"}).fillna("unassigned")
     
+                # Make stable sorted categories (ignore None)
+                uniq_labels = [x for x in pd.unique(labels_obj) if isinstance(x, str) and x != "unassigned"]
+                uniq_labels = sorted(set(uniq_labels))
+                cats = uniq_labels + ["unassigned"]
+    
+                adata.obs["celltypist_label"] = pd.Categorical(labels_obj, categories=cats, ordered=False)
                 st.session_state.adata = adata
     
+                # --- Step 5: Display results ---
                 st.success("✅ CellTypist annotation complete.")
                 st.dataframe(
                     adata.obs["celltypist_label"]
@@ -1218,12 +1221,14 @@ if step == "Cell Type Annotation":
                     width="stretch",
                 )
     
+                # --- Step 6: UMAP Visualization ---
                 if "X_umap" in adata.obsm:
                     fig = _umap_scatter(adata, color_key="celltypist_label")
                     if fig is not None:
                         st.plotly_chart(
-                            fig, width="stretch",
-                            config={"displaylogo": False, "responsive": True}
+                            fig,
+                            use_container_width=True,
+                            config={"displaylogo": False, "responsive": True},
                         )
                 else:
                     st.info("No UMAP found. Compute an embedding to visualize labels.")
